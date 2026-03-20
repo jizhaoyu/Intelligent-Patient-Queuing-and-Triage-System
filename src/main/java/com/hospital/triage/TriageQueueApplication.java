@@ -1,12 +1,13 @@
 package com.hospital.triage;
 
+import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
-@MapperScan("com.hospital.triage.modules")
+@MapperScan(basePackages = "com.hospital.triage.modules", annotationClass = Mapper.class)
 @SpringBootApplication
 public class TriageQueueApplication {
 

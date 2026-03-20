@@ -4,9 +4,11 @@ import com.hospital.triage.common.api.Result;
 import com.hospital.triage.modules.auth.security.AuthenticatedUser;
 import com.hospital.triage.modules.queue.entity.dto.QueueTicketCreateDTO;
 import com.hospital.triage.modules.queue.entity.vo.DeptQueueSummaryVO;
+import com.hospital.triage.modules.queue.entity.vo.QueueEventLogVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueRankVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueTicketVO;
 import com.hospital.triage.modules.queue.service.QueueDispatchService;
+import com.hospital.triage.modules.queue.service.QueueEventLogService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -15,16 +17,22 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/queues")
 public class QueueController {
 
     private final QueueDispatchService queueDispatchService;
+    private final QueueEventLogService queueEventLogService;
 
-    public QueueController(QueueDispatchService queueDispatchService) {
+    public QueueController(QueueDispatchService queueDispatchService,
+                           QueueEventLogService queueEventLogService) {
         this.queueDispatchService = queueDispatchService;
+        this.queueEventLogService = queueEventLogService;
     }
 
     @PostMapping("/tickets")
@@ -40,7 +48,6 @@ public class QueueController {
     }
 
     @GetMapping("/depts/{deptId}/waiting")
-    @PreAuthorize("hasAuthority('queue:manage') or hasAuthority('dashboard:view')")
     public Result<DeptQueueSummaryVO> waiting(@PathVariable Long deptId) {
         return Result.success(queueDispatchService.waitingList(deptId));
     }
@@ -79,5 +86,12 @@ public class QueueController {
     @PreAuthorize("hasAuthority('queue:manage') or hasAuthority('dashboard:view')")
     public Result<QueueRankVO> rank(@PathVariable String ticketNo) {
         return Result.success(queueDispatchService.rank(ticketNo));
+    }
+
+    @GetMapping("/events")
+    @PreAuthorize("hasAuthority('queue:manage')")
+    public Result<List<QueueEventLogVO>> events(@RequestParam(required = false) String ticketNo,
+                                                @RequestParam(required = false) String eventType) {
+        return Result.success(queueEventLogService.list(ticketNo, eventType));
     }
 }

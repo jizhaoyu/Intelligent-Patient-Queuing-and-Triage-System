@@ -10,6 +10,9 @@ public final class SecurityConstants {
     public static final String ROLE_PREFIX = "ROLE_";
     public static final List<String> WHITE_LIST = List.of(
             "/api/auth/login",
+            "/api/dashboard/depts/*/summary",
+            "/api/dashboard/rooms/*/current",
+            "/api/queues/depts/*/waiting",
             "/v3/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html",

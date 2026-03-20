@@ -5,3 +5,13 @@ target/
 logs/
 *.iml
 .DS_Store
+/.claude/
+/.m2/
+/.playwright-mcp/
+/output/
+/.jshell-prefs/
+/package-lock.json
+/web/node_modules/
+/web/dist/
+/web/.npm-cache/
+/web/.playwright-browsers/
