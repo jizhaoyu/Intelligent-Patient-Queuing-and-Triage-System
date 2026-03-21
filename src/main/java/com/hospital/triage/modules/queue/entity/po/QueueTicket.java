@@ -23,6 +23,9 @@ public class QueueTicket extends BaseEntity {
     private String status;
     private Integer recallCount;
     private Integer fastTrack;
+    private String sourceType;
+    private String sourceRemark;
+    private String lastAdjustReason;
     private LocalDateTime enqueueTime;
     private LocalDateTime callTime;
     private LocalDateTime completeTime;

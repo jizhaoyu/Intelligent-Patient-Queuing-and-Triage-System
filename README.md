@@ -1,43 +1,62 @@
-# Intelligent Patient Queuing and Triage System
+# 患者智能排队分诊系统
 
-患者智能排队分诊系统，面向医院门诊/急诊场景，覆盖患者建档、到诊登记、规则分诊、排队叫号、候诊看板和三端联动展示。
+面向医院门诊/急诊场景的排队与分诊系统，覆盖患者建档、到诊登记、分诊评估、自动入队、诊室叫号、异常治理、患者自助机取号、排队查询，以及 AI 预分诊与辅助分诊能力。
 
-当前仓库已经包含：
+当前仓库的交付重点如下：
 
-- Spring Boot 3 后端
-- Vue 3 + Vite 独立前端
-- 管理后台、工作台、大屏三端入口
-- 示例数据、接口文档和联调脚本
+- 主 happy path 已打通：`到诊 -> 分诊评估 -> 自动入队 -> 诊室叫号`
+- 患者端正式能力是“院内自助机取号 + 排队查询”
+- 手工建票仅保留为“异常补录 / 管理员修复”
+- AI 已接入患者自助取号与护士分诊，但定位为“辅助建议层”，不可用时会回退到规则结果，不阻断主链路
 
-说明：
+## 当前入口
 
-- 当前版本的“智能分诊”仍以规则和阈值计算为主，还不是大模型驱动的 AI 分诊。
-- AI 升级规划已整理在 [docs/规划.md](docs/规划.md)。
+### 后台端
+
+- 地址：`http://localhost:5173/login`
+- 职责：治理、审计、异常修复、规则维护
+
+### 工作台
+
+- 地址：`http://localhost:5174/login`
+- 职责：建档、到诊、分诊、叫号
+
+### 屏显端
+
+- 地址：`http://localhost:5175/login`
+- 职责：科室 / 诊室候诊展示
+
+### 患者端（院内自助机）
+
+- 地址：`http://localhost:5176/patient/self-queue`
+- 能力：
+  - 自助机正式取号：`/patient/self-queue`
+  - 排队结果查询：`/patient/queue`
 
 ## 核心功能
 
 - 用户认证与权限控制
 - 患者档案管理
 - 就诊建档与到诊登记
-- 分诊评估与规则维护
-- 排队取号、叫号、重呼、过号、完成、取消
-- 候诊队列查询与事件日志
-- 科室看板、诊室屏、三端分层路由
+- 分诊评估、AI 辅助建议与自动入队
+- 诊室叫号、复呼、过号、完成接诊
+- 队列来源审计与事件日志
+- “已分诊未入队”异常治理
+- 患者院内自助机取号与排队查询
+- 科室 / 诊室屏显展示
 
 ## 技术栈
 
 ### 后端
 
-- JDK 17
+- JDK 17+，已在 JDK 25 环境验证
 - Maven
 - Spring Boot 3.3.9
 - Spring Security
 - MyBatis-Plus
 - MySQL
 - Redis
-- SpringDoc OpenAPI
-- Knife4j
-- Hutool
+- SpringDoc OpenAPI + Knife4j
 
 ### 前端
 
@@ -47,126 +66,69 @@
 - Pinia
 - Vue Router
 - Element Plus
-- Axios
 
 ## 项目结构
 
 ```text
 src/main/java/com/hospital/triage
-├─ common        # 通用返回、常量、枚举、基础模型
-├─ config        # 安全、Redis、OpenAPI、MyBatis 配置
-├─ exception     # 全局异常处理
+├─ common
+├─ config
+├─ exception
 ├─ modules
-│  ├─ auth       # 登录认证、JWT、权限
-│  ├─ patient    # 患者档案
-│  ├─ visit      # 就诊与到诊登记
-│  ├─ triage     # 分诊评估、分诊规则
-│  ├─ queue      # 排队、叫号、事件日志
-│  ├─ dashboard  # 科室看板、诊室屏
-│  ├─ clinic     # 科室与诊室基础数据
-│  └─ system     # 用户、角色、权限基础实体
+│  ├─ auth
+│  ├─ patient
+│  ├─ visit
+│  ├─ triage
+│  ├─ queue
+│  ├─ dashboard
+│  ├─ clinic
+│  └─ system
 └─ TriageQueueApplication.java
 
 src/main/resources
 ├─ application.yml
 ├─ db/schema.sql
 ├─ db/data.sql
-├─ mapper/
+├─ db/triage-rule-seed.sql
 └─ scripts/queue/call-next.lua
 
 web/
-├─ src/layout    # login/admin/workstation/screen 布局
-├─ src/router    # 三端分层路由与权限守卫
-├─ src/stores    # 登录态与权限状态
-├─ src/views     # 管理后台 / 工作台 / 大屏页面
-├─ src/api       # 前端 API 封装
+├─ src/layout
+├─ src/router
+├─ src/views
+├─ src/api
 └─ vite.config.ts
 
 docs/
 ├─ API接口说明.md
-├─ 三端说明.md
-└─ 规划.md
-
-tools/
-└─ start-three-portals.ps1
+├─ AI智能排队分诊规划方案.md
+├─ AI智能排队分诊实施清单.md
+├─ 单机上线部署清单.md
+└─ 项目面试5分钟演示稿.md
 ```
 
-## 当前三端说明
+## 快速开始
 
-- `admin`
-  管理后台，提供运营总览、患者管理、候诊队列、分诊规则、事件查看等能力。
-- `workstation`
-  导诊/分诊/医生工作台，提供患者查询、就诊建档、分诊评估、诊室叫号。
-- `screen`
-  科室候诊屏和诊室叫号屏，面向现场展示，不包含后台操作入口。
-
-## 已接入的主要接口
-
-### 业务主链路
-
-- `/api/auth/login`
-- `/api/auth/me`
-- `/api/auth/logout`
-- `/api/patients`
-- `/api/patients/{id}`
-- `/api/visits`
-- `/api/visits/{id}`
-- `/api/visits/{id}/arrive`
-- `/api/triage/assessments`
-- `/api/triage/assessments/{id}`
-- `/api/triage/assessments/{id}/reassess`
-- `/api/triage/rules`
-- `/api/queues/tickets`
-- `/api/queues/tickets/{ticketNo}`
-- `/api/queues/tickets/{ticketNo}/rank`
-- `/api/queues/tickets/{ticketNo}/recall`
-- `/api/queues/tickets/{ticketNo}/missed`
-- `/api/queues/tickets/{ticketNo}/complete`
-- `/api/queues/tickets/{ticketNo}/cancel`
-- `/api/queues/events`
-
-### 看板与展示
-
-- `/api/queues/depts/{deptId}/waiting`
-- `/api/dashboard/depts/{deptId}/summary`
-- `/api/dashboard/rooms/{roomId}/current`
-
-说明：
-
-- 当前大屏相关接口已放开匿名访问，便于候诊区和诊室展示屏直接读取。
-
-## 环境要求
+### 1. 环境要求
 
 - JDK 17+
 - Maven 3.9+
 - Node.js 20+
-- npm 10+
 - MySQL 8.x
 - Redis 6.x+
 
-## 快速开始
-
-### 1. 创建数据库
+### 2. 初始化数据库
 
 ```sql
 CREATE DATABASE triage_queue DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 ```
 
-### 2. 修改后端配置
+导入基础表结构和演示数据：
 
-默认配置文件：
-
-- `src/main/resources/application.yml`
-
-可按需覆盖以下环境变量：
-
-- `DB_URL`
-- `DB_USERNAME`
-- `DB_PASSWORD`
-- `REDIS_HOST`
-- `REDIS_PORT`
-- `REDIS_DB`
-- `JWT_SECRET`
+```bash
+mysql -uroot -p triage_queue < src/main/resources/db/schema.sql
+mysql -uroot -p triage_queue < src/main/resources/db/data.sql
+```
 
 ### 3. 启动后端
 
@@ -185,65 +147,62 @@ java -jar target/triage-queue-0.0.1-SNAPSHOT.jar
 
 ```bash
 npm --prefix web install
-npm --prefix web run dev
 ```
 
-默认入口：
-
-- `http://localhost:5173/login`
-
-如需三端同时启动：
+按入口分别启动：
 
 ```bash
 npm --prefix web run dev:admin
 npm --prefix web run dev:workstation
 npm --prefix web run dev:screen
+npm --prefix web run dev:kiosk
 ```
 
-对应入口：
+默认地址：
 
-- 管理后台：`http://localhost:5173/login`
+- 后台端：`http://localhost:5173/login`
 - 工作台：`http://localhost:5174/login`
-- 大屏端：`http://localhost:5175/login`
+- 屏显端：`http://localhost:5175/login`
+- 患者端：`http://localhost:5176/patient/self-queue`
 
-也可以直接运行脚本：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\start-three-portals.ps1
-```
-
-如需修改 Vite 代理目标：
+如需统一修改后端代理目标：
 
 ```bash
 VITE_API_PROXY_TARGET=http://localhost:8080
 ```
 
-## 数据初始化
+## AI 本地配置
 
-数据库初始化脚本位于：
+后端会通过 `spring.config.import` 读取可选文件 `src/main/resources/application-ai.yml`。推荐做法是本地创建该文件或直接注入环境变量，不要把真实 Key 提交到仓库。
 
-- `src/main/resources/db/schema.sql`
-- `src/main/resources/db/data.sql`
+常用环境变量：
 
-用于初始化：
+```bash
+AI_ENABLED=true
+AI_PROVIDER=moonshot
+AI_MODEL=kimi-k2.5
+MOONSHOT_BASE_URL=https://api.moonshot.cn/v1
+MOONSHOT_API_KEY=replace-with-your-own-key
+```
 
-- 患者/就诊/分诊/排队相关表
-- 科室与诊室基础数据
-- 角色、权限、用户示例数据
-- 演示患者、分诊规则、队列样例数据
+如果只想验证主链路，可保持：
+
+```bash
+AI_ENABLED=false
+```
 
 ## 默认演示账号
 
 - 管理员：`admin`
 - 分诊护士：`triage.nurse`
-- 医生：`doctor.zhang`
 - 导诊台：`guide.desk`
+- 诊室医生：`doctor.zhang`
 
-默认演示密码：
+默认密码：
 
 - `password`
 
-推荐验证入口：
+推荐首页：
 
 - `admin` -> `/admin/dashboard`
 - `triage.nurse` -> `/workstation/triage/assessments/new`
@@ -252,27 +211,32 @@ VITE_API_PROXY_TARGET=http://localhost:8080
 
 ## 典型业务流程
 
-1. 用户登录
-2. 新增患者档案
-3. 创建就诊记录
-4. 患者到诊登记
-5. 分诊评估
-6. 生成排队票据
-7. 医生叫号 / 重呼 / 过号 / 完成
-8. 科室大屏与诊室屏展示实时状态
+### 工作台主链路
 
-## 验证命令
+1. 导诊台建档 / 挂号后到诊
+2. 分诊护士完成评估，系统生成规则结果与 AI 建议
+3. 系统自动生成或刷新 `WAITING` 票据
+4. 诊室医生在 `/workstation/queue-call` 叫号、复呼、过号、完成接诊
+
+### 患者端主链路
+
+1. 既有患者在院内自助机输入 `patientNo + 手机号后 4 位`
+2. 若已有有效排队，直接返回当前排队结果
+3. 若无有效就诊，系统创建本次 visit、自动到诊、生成 AI 预分诊建议并自动入队
+4. 患者可通过查询页查看 `WAITING`、`CALLING`、`MISSED`、`COMPLETED`、`CANCELLED` 等状态，以及当前 AI 建议信息
+
+## 测试与校验
 
 ### 后端
 
 ```bash
-mvn -q -DskipTests compile
-mvn -q "-Dtest=QueueDispatchServiceImplTest,TriageAssessmentServiceImplTest" test
+mvn test
 ```
 
 说明：
 
-- 完整 `mvn test` 依赖 Docker/Testcontainers。
+- 当前测试基线已恢复，`mvn test` 可执行通过
+- 个别依赖 Docker / Testcontainers 的集成用例在本地无 Docker 时会自动跳过，不影响本轮验收基线
 
 ### 前端
 
@@ -281,36 +245,32 @@ npm --prefix web run typecheck
 npm --prefix web run build
 ```
 
-## 接口文档
+## 相关文档
 
 - [docs/API接口说明.md](docs/API接口说明.md)
-- [docs/三端说明.md](docs/三端说明.md)
-- [docs/规划.md](docs/规划.md)
+- [docs/AI智能排队分诊规划方案.md](docs/AI智能排队分诊规划方案.md)
+- [docs/AI智能排队分诊实施清单.md](docs/AI智能排队分诊实施清单.md)
+- [docs/单机上线部署清单.md](docs/单机上线部署清单.md)
+- [docs/项目面试5分钟演示稿.md](docs/项目面试5分钟演示稿.md)
 
-运行后也可查看在线文档：
+在线接口文档：
 
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- Knife4j: `http://localhost:8080/doc.html`
+- Swagger UI：`http://localhost:8080/swagger-ui.html`
+- Knife4j：`http://localhost:8080/doc.html`
 
-## 当前状态与后续方向
+## 当前状态
 
-当前仓库已经完成：
+本仓库当前已完成：
 
-- 后端主链路接口
-- 三端独立前端工程
-- 候诊队列与诊室叫号页面
-- 队列事件日志接口与管理页
-- 科室/诊室大屏联动展示
+- 主链路自动入队与诊室叫号
+- 患者端院内自助机正式化
+- AI 预分诊、护士辅助分诊与 AI 审计落库
+- 队列来源审计字段与事件展示
+- “已分诊未入队”异常治理入口
+- 文档、接口、页面、测试口径对齐
 
-可继续扩展方向：
+后续阶段聚焦：
 
-- 真正的大模型 AI 分诊建议
-- WebSocket/SSE 实时推送
-- 更细粒度的规则维护与运营报表
-- 多院区/多楼层支持
-- HIS/LIS/EMR 对接
-- 脱敏审计与患者侧自助服务
-
-## 说明
-
-本项目适合作为医院排队分诊场景的课程设计、毕业设计、原型系统和业务扩展基础。
+- 异常治理深化与运营兜底
+- 队列侧 AI 审计与运营分析增强
+- 实时化能力、权限平台化与多院区扩展

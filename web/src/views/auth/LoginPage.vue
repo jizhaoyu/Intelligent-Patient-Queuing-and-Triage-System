@@ -5,11 +5,10 @@
       <h1>患者智能排队分诊系统</h1>
       <p>{{ portalLead }}</p>
       <div class="login-page__tips">
-        <el-tag>管理后台</el-tag>
-        <el-tag>导诊建档</el-tag>
-        <el-tag>分诊评估</el-tag>
+        <el-tag>管理看板</el-tag>
         <el-tag>诊室叫号</el-tag>
-        <el-tag>候诊大屏</el-tag>
+        <el-tag>科室大屏</el-tag>
+        <el-tag>自助取号</el-tag>
       </div>
       <div class="login-page__support">
         <strong>统一登录入口</strong>
@@ -50,10 +49,10 @@ const submitting = ref(false)
 const portalLabel = portalDisplayName
 const portalTheme = portalSurface
 const portalLeadMap = {
-  admin: '面向医院运营、分诊治理与规则维护的管理入口，强调秩序、质量和全局态势。',
-  workstation: '面向导诊台、分诊护士和诊室医生的协同入口，强调效率、确认和闭环操作。',
+  admin: '面向医院运营总览的管理入口，聚焦全院候诊、叫号与接诊态势。',
+  workstation: '面向诊室医生的工作入口，聚焦待诊患者处理、叫号与接诊闭环。',
   screen: '面向候诊公示与诊室提示的大屏入口，强调远距可读、清晰导视和就诊秩序。',
-  all: '覆盖管理、工作台与候诊展示的统一入口，便于联调与综合演示。'
+  all: '覆盖管理看板、诊室叫号、候诊大屏与自助取号的统一入口，便于联调与综合演示。'
 } as const
 const portalLead = portalLeadMap[portalSurface]
 

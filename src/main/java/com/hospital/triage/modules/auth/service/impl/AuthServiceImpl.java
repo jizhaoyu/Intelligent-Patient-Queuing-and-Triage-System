@@ -27,9 +27,7 @@ public class AuthServiceImpl implements AuthService {
 
     private static final Map<String, List<String>> ROLE_PERMISSION_MAP = Map.of(
             "ADMIN", List.of("patient:manage", "visit:manage", "triage:assess", "triage:rule", "queue:manage", "queue:call", "dashboard:view"),
-            "TRIAGE_NURSE", List.of("patient:manage", "visit:manage", "triage:assess", "queue:manage", "dashboard:view"),
-            "DOCTOR", List.of("queue:call", "dashboard:view"),
-            "GUIDE_DESK", List.of("patient:manage", "visit:manage", "dashboard:view")
+            "DOCTOR", List.of("queue:call", "triage:assess", "dashboard:view")
     );
 
     private final SysUserMapper sysUserMapper;
@@ -86,7 +84,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private AuthenticatedUser buildAuthenticatedUser(SysUser user) {
-        String roleCode = StringUtils.hasText(user.getRoleCode()) ? user.getRoleCode() : "GUIDE_DESK";
+        String roleCode = StringUtils.hasText(user.getRoleCode()) ? user.getRoleCode() : "";
         return AuthenticatedUser.builder()
                 .userId(user.getId())
                 .username(user.getUsername())

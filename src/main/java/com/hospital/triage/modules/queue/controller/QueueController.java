@@ -4,10 +4,12 @@ import com.hospital.triage.common.api.Result;
 import com.hospital.triage.modules.auth.security.AuthenticatedUser;
 import com.hospital.triage.modules.queue.entity.dto.QueueTicketCreateDTO;
 import com.hospital.triage.modules.queue.entity.vo.DeptQueueSummaryVO;
+import com.hospital.triage.modules.queue.entity.vo.QueueExceptionVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueEventLogVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueRankVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueTicketVO;
 import com.hospital.triage.modules.queue.service.QueueDispatchService;
+import com.hospital.triage.modules.queue.service.QueueExceptionService;
 import com.hospital.triage.modules.queue.service.QueueEventLogService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,11 +29,14 @@ import java.util.List;
 public class QueueController {
 
     private final QueueDispatchService queueDispatchService;
+    private final QueueExceptionService queueExceptionService;
     private final QueueEventLogService queueEventLogService;
 
     public QueueController(QueueDispatchService queueDispatchService,
+                           QueueExceptionService queueExceptionService,
                            QueueEventLogService queueEventLogService) {
         this.queueDispatchService = queueDispatchService;
+        this.queueExceptionService = queueExceptionService;
         this.queueEventLogService = queueEventLogService;
     }
 
@@ -48,8 +53,19 @@ public class QueueController {
     }
 
     @GetMapping("/depts/{deptId}/waiting")
-    public Result<DeptQueueSummaryVO> waiting(@PathVariable Long deptId) {
+    public Result<DeptQueueSummaryVO> waitingByDept(@PathVariable Long deptId) {
         return Result.success(queueDispatchService.waitingList(deptId));
+    }
+
+    @GetMapping("/waiting")
+    public Result<DeptQueueSummaryVO> waiting(@RequestParam(required = false) Long deptId) {
+        return Result.success(queueDispatchService.waitingList(normalizeDeptId(deptId)));
+    }
+
+    @GetMapping("/active")
+    public Result<List<QueueTicketVO>> active(@RequestParam(required = false) Long deptId,
+                                              @RequestParam(required = false) Long roomId) {
+        return Result.success(queueDispatchService.listActiveTickets(normalizeDeptId(deptId), normalizeRoomId(roomId)));
     }
 
     @PostMapping("/rooms/{roomId}/call-next")
@@ -93,5 +109,19 @@ public class QueueController {
     public Result<List<QueueEventLogVO>> events(@RequestParam(required = false) String ticketNo,
                                                 @RequestParam(required = false) String eventType) {
         return Result.success(queueEventLogService.list(ticketNo, eventType));
+    }
+
+    @GetMapping("/exceptions/unqueued-triaged")
+    @PreAuthorize("hasAuthority('queue:manage')")
+    public Result<List<QueueExceptionVO>> unqueuedTriaged(@RequestParam(required = false) Long deptId) {
+        return Result.success(queueExceptionService.listUnqueuedTriaged(normalizeDeptId(deptId)));
+    }
+
+    private Long normalizeDeptId(Long deptId) {
+        return deptId != null && deptId <= 0 ? null : deptId;
+    }
+
+    private Long normalizeRoomId(Long roomId) {
+        return roomId != null && roomId <= 0 ? null : roomId;
     }
 }

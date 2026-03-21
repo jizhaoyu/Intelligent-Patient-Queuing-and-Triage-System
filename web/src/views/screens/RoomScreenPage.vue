@@ -9,6 +9,7 @@
       <div class="screen-clock">
         <div class="screen-clock__label">当前诊室 {{ roomId }}</div>
         <div class="screen-clock__time">{{ screenTime }}</div>
+        <div class="screen-clock__date">{{ screenDate }}</div>
       </div>
     </header>
 
@@ -32,6 +33,10 @@
           </div>
         </div>
         <div class="screen-guidance">
+          <div class="screen-guidance__item">
+            <span>患者姓名</span>
+            <strong>{{ current?.patientName || '--' }}</strong>
+          </div>
           <div class="screen-guidance__item">
             <span>当前票号</span>
             <strong>{{ current?.ticketNo || '--' }}</strong>
@@ -70,26 +75,40 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getRoomCurrent } from '@/api/dashboard'
 import type { RoomCurrent } from '@/types/queue'
+import { formatQueueStatusCode } from '@/utils/queueStatus'
 
 const route = useRoute()
 const roomId = Number(route.params.roomId)
 const current = ref<RoomCurrent | null>(null)
 const screenTime = ref(formatScreenTime())
-let timer: number | undefined
+const screenDate = ref(formatScreenDate())
+let clockTimer: number | undefined
+let refreshTimer: number | undefined
 
 const currentStatusText = computed(() => {
-  const map: Record<string, string> = {
-    WAITING: '候诊中',
-    CALLING: '请进入诊室',
-    COMPLETED: '本轮已结束',
-    MISSED: '请联系导诊台'
+  if (!current.value?.status) {
+    return '待叫号'
   }
-
-  return current.value?.status ? map[current.value.status] || current.value.status : '待叫号'
+  if (current.value.status === 'CALLING') {
+    return '请进入诊室'
+  }
+  if (current.value.status === 'COMPLETED') {
+    return '本轮已结束'
+  }
+  if (current.value.status === 'MISSED') {
+    return '请联系导诊台'
+  }
+  return formatQueueStatusCode(current.value.status)
 })
 
 const patientLine = computed(() => {
-  return current.value?.ticketNo ? `请 ${current.value.ticketNo} 号患者前往诊室` : '当前暂无叫号，请留意后续提示'
+  if (!current.value?.ticketNo) {
+    return '当前暂无叫号，请留意后续提示'
+  }
+  if (current.value.patientName) {
+    return `请 ${current.value.patientName}（${current.value.ticketNo}）前往诊室`
+  }
+  return `请 ${current.value.ticketNo} 号患者前往诊室`
 })
 
 const statusTone = computed(() => {
@@ -114,15 +133,22 @@ async function loadRoomCurrent() {
 }
 
 onMounted(() => {
-  loadRoomCurrent()
-  timer = window.setInterval(() => {
+  void loadRoomCurrent()
+  clockTimer = window.setInterval(() => {
     screenTime.value = formatScreenTime()
+    screenDate.value = formatScreenDate()
   }, 1000)
+  refreshTimer = window.setInterval(() => {
+    void loadRoomCurrent()
+  }, 15000)
 })
 
 onUnmounted(() => {
-  if (timer) {
-    window.clearInterval(timer)
+  if (clockTimer) {
+    window.clearInterval(clockTimer)
+  }
+  if (refreshTimer) {
+    window.clearInterval(refreshTimer)
   }
 })
 
@@ -131,6 +157,14 @@ function formatScreenTime() {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit'
+  }).format(new Date())
+}
+
+function formatScreenDate() {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long'
   }).format(new Date())
 }
 </script>

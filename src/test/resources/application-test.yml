@@ -27,3 +27,5 @@ app:
     call-next-retry-times: 3
     calling-ttl-seconds: 1800
     allow-dept-fallback: true
+  ai:
+    enabled: false

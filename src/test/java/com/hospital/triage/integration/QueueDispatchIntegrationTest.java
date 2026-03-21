@@ -33,6 +33,7 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -78,14 +79,15 @@ class QueueDispatchIntegrationTest {
         assertThat(jdbcTemplate.queryForObject("select count(*) from clinic_dept", Integer.class)).isGreaterThanOrEqualTo(4);
         assertThat(jdbcTemplate.queryForObject("select count(*) from sys_user", Integer.class)).isGreaterThanOrEqualTo(4);
 
-        Long patientId = readId(postJson("/api/patients", token, """
+        JsonNode patient = postJson("/api/patients", token, """
                 {
                   \"patientName\": \"张三\",
                   \"gender\": \"MALE\",
                   \"birthDate\": \"1990-01-01\",
                   \"phone\": \"13800000001\"
                 }
-                """));
+                """);
+        Long patientId = readId(patient);
 
         Long visitId = readId(postJson("/api/visits", token, """
                 {
@@ -96,7 +98,7 @@ class QueueDispatchIntegrationTest {
 
         postNoData("/api/visits/%d/arrive".formatted(visitId), token);
 
-        Long assessmentId = readId(postJson("/api/triage/assessments", token, """
+        JsonNode assessment = postJson("/api/triage/assessments", token, """
                 {
                   \"visitId\": %d,
                   \"symptomTags\": \"胸痛,呼吸困难\",
@@ -104,15 +106,11 @@ class QueueDispatchIntegrationTest {
                   \"bloodOxygen\": 88,
                   \"assessor\": \"nurse-a\"
                 }
-                """.formatted(visitId)));
+                """.formatted(visitId));
 
-        String ticketNo = readText(postJson("/api/queues/tickets", token, """
-                {
-                  \"visitId\": %d,
-                  \"assessmentId\": %d,
-                  \"roomId\": 1
-                }
-                """.formatted(visitId, assessmentId)), "/data/ticketNo");
+        String ticketNo = readText(assessment, "/data/queueTicketNo");
+        assertThat(ticketNo).isNotBlank();
+        assertThat(readText(assessment, "/data/queueStatus")).isEqualTo("WAITING");
 
         JsonNode calling = postJson("/api/queues/rooms/1/call-next", token, "");
         assertThat(readText(calling, "/data/ticketNo")).isEqualTo(ticketNo);
@@ -123,6 +121,8 @@ class QueueDispatchIntegrationTest {
                 .last("limit 1"));
         assertThat(ticket).isNotNull();
         assertThat(ticket.getStatus()).isEqualTo("CALLING");
+        assertThat(ticket.getSourceType()).isEqualTo("TRIAGE_AUTO");
+        assertThat(ticket.getSourceRemark()).isEqualTo("分诊自动入队");
         assertThat(stringRedisTemplate.opsForZSet().score("queue:room:1:active", ticketNo)).isNull();
         assertThat(stringRedisTemplate.opsForZSet().score("queue:dept:1:active", ticketNo)).isNull();
         assertThat(stringRedisTemplate.opsForValue().get("queue:calling:1")).isEqualTo(ticketNo);
@@ -130,6 +130,134 @@ class QueueDispatchIntegrationTest {
         JsonNode completed = postJson("/api/queues/tickets/%s/complete".formatted(ticketNo), token, "");
         assertThat(readText(completed, "/data/status")).isEqualTo("COMPLETED");
         assertThat(stringRedisTemplate.opsForValue().get("queue:calling:1")).isNull();
+    }
+
+    @Test
+    void shouldEnrollKnownPatientFromKioskAndReuseExistingQueue() throws Exception {
+        String token = login("admin", "password");
+
+        JsonNode patient = postJson("/api/patients", token, """
+                {
+                  \"patientName\": \"赵六\",
+                  \"gender\": \"MALE\",
+                  \"birthDate\": \"1988-02-02\",
+                  \"phone\": \"13800001234\"
+                }
+                """);
+        String patientNo = readText(patient, "/data/patientNo");
+
+        JsonNode firstEnroll = postJson("/api/patient-queue/enroll", null, """
+                {
+                  \"patientNo\": \"%s\",
+                  \"phoneSuffix\": \"1234\",
+                  \"deptId\": 1,
+                  \"chiefComplaint\": \"胸闷\"
+                }
+                """.formatted(patientNo));
+        String firstTicketNo = readText(firstEnroll, "/data/ticketNo");
+        assertThat(firstTicketNo).isNotBlank();
+
+        QueueTicket firstTicket = queueTicketMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<QueueTicket>()
+                .eq(QueueTicket::getTicketNo, firstTicketNo)
+                .last("limit 1"));
+        assertThat(firstTicket).isNotNull();
+        assertThat(firstTicket.getSourceType()).isEqualTo("KIOSK");
+        assertThat(firstTicket.getSourceRemark()).isEqualTo("院内自助机正式取号");
+
+        JsonNode secondEnroll = postJson("/api/patient-queue/enroll", null, """
+                {
+                  \"patientNo\": \"%s\",
+                  \"phoneSuffix\": \"1234\",
+                  \"deptId\": 1,
+                  \"chiefComplaint\": \"胸闷\"
+                }
+                """.formatted(patientNo));
+        assertThat(readText(secondEnroll, "/data/ticketNo")).isEqualTo(firstTicketNo);
+    }
+
+    @Test
+    void shouldExposeUnqueuedTriagedExceptions() throws Exception {
+        String token = login("admin", "password");
+
+        JsonNode patient = postJson("/api/patients", token, """
+                {
+                  \"patientName\": \"异常患者\",
+                  \"gender\": \"MALE\",
+                  \"birthDate\": \"1991-03-03\",
+                  \"phone\": \"13800005678\"
+                }
+                """);
+        Long patientId = readId(patient);
+
+        Long visitId = readId(postJson("/api/visits", token, """
+                {
+                  \"patientId\": %d,
+                  \"chiefComplaint\": \"头晕\"
+                }
+                """.formatted(patientId)));
+        postNoData("/api/visits/%d/arrive".formatted(visitId), token);
+
+        JsonNode assessment = postJson("/api/triage/assessments", token, """
+                {
+                  \"visitId\": %d,
+                  \"symptomTags\": \"头晕\",
+                  \"heartRate\": 95,
+                  \"bloodOxygen\": 98,
+                  \"assessor\": \"nurse-c\"
+                }
+                """.formatted(visitId));
+        String ticketNo = readText(assessment, "/data/queueTicketNo");
+        assertThat(ticketNo).isNotBlank();
+
+        jdbcTemplate.update("delete from queue_event_log where ticket_no = ?", ticketNo);
+        jdbcTemplate.update("delete from queue_ticket where ticket_no = ?", ticketNo);
+        jdbcTemplate.update("update visit_record set status = 'TRIAGED' where id = ?", visitId);
+
+        JsonNode response = getJson("/api/queues/exceptions/unqueued-triaged", token);
+        assertThat(response.at("/data").toString()).contains("异常患者");
+    }
+
+    @Test
+    void shouldRecoverCallNextWhenRedisWaitingIndexMissing() throws Exception {
+        String token = login("admin", "password");
+
+        JsonNode patient = postJson("/api/patients", token, """
+                {
+                  \"patientName\": \"索引缺失患者\",
+                  \"gender\": \"MALE\",
+                  \"birthDate\": \"1992-04-04\",
+                  \"phone\": \"13800007890\"
+                }
+                """);
+        Long patientId = readId(patient);
+
+        Long visitId = readId(postJson("/api/visits", token, """
+                {
+                  \"patientId\": %d,
+                  \"chiefComplaint\": \"胸痛\"
+                }
+                """.formatted(patientId)));
+        postNoData("/api/visits/%d/arrive".formatted(visitId), token);
+
+        JsonNode assessment = postJson("/api/triage/assessments", token, """
+                {
+                  \"visitId\": %d,
+                  \"symptomTags\": \"胸痛\",
+                  \"heartRate\": 118,
+                  \"bloodOxygen\": 93,
+                  \"assessor\": \"nurse-repair\"
+                }
+                """.formatted(visitId));
+        String ticketNo = readText(assessment, "/data/queueTicketNo");
+        assertThat(ticketNo).isNotBlank();
+
+        stringRedisTemplate.opsForZSet().remove("queue:room:1:active", ticketNo);
+        stringRedisTemplate.opsForZSet().remove("queue:dept:1:active", ticketNo);
+
+        JsonNode calling = postJson("/api/queues/rooms/1/call-next", token, "");
+        assertThat(readText(calling, "/data/ticketNo")).isEqualTo(ticketNo);
+        assertThat(readText(calling, "/data/status")).isEqualTo("CALLING");
+        assertThat(stringRedisTemplate.opsForValue().get("queue:calling:1")).isEqualTo(ticketNo);
     }
 
     @Test
@@ -189,7 +317,7 @@ class QueueDispatchIntegrationTest {
                 }
                 """.formatted(patientId, symptomTags)));
         postNoData("/api/visits/%d/arrive".formatted(visitId), token);
-        Long assessmentId = readId(postJson("/api/triage/assessments", token, """
+        JsonNode assessment = postJson("/api/triage/assessments", token, """
                 {
                   \"visitId\": %d,
                   \"symptomTags\": \"%s\",
@@ -197,14 +325,8 @@ class QueueDispatchIntegrationTest {
                   \"bloodOxygen\": 92,
                   \"assessor\": \"nurse-b\"
                 }
-                """.formatted(visitId, symptomTags)));
-        postJson("/api/queues/tickets", token, """
-                {
-                  \"visitId\": %d,
-                  \"assessmentId\": %d,
-                  \"roomId\": 1
-                }
-                """.formatted(visitId, assessmentId));
+                """.formatted(visitId, symptomTags));
+        assertThat(readText(assessment, "/data/queueTicketNo")).isNotBlank();
         return visitId;
     }
 
@@ -245,6 +367,23 @@ class QueueDispatchIntegrationTest {
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(content);
+    }
+
+    private JsonNode getJson(String path, String token) throws Exception {
+        var requestBuilder = get(path).contentType(MediaType.APPLICATION_JSON);
+        if (token != null) {
+            requestBuilder.header("Authorization", "Bearer " + token);
+        }
+        String content = mockMvc.perform(requestBuilder)
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode response = objectMapper.readTree(content);
+        assertThat(response.path("success").asBoolean())
+                .withFailMessage(response.toPrettyString())
+                .isTrue();
+        return response;
     }
 
     private Long readId(JsonNode response) {

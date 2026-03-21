@@ -3,11 +3,11 @@
     variant="workstation"
     brand="患者智能排队分诊系统"
     subtitle="临床协同工作台"
-    surface-label="导诊、分诊、叫号一体化"
-    description="聚焦高频操作、清晰提示和低误操作流程，适配导诊台、分诊护士与诊室医生。"
+    surface-label="诊室叫号"
+    description="仅保留医生诊室叫号主链路，聚焦待诊患者处理与接诊节奏。"
     :navigation="navigation"
     :context-items="contextItems"
-    :highlights="['快速录入', '接诊闭环', '重点提醒']"
+    :highlights="['待诊患者', '叫号进度', '接诊焦点']"
   />
 </template>
 
@@ -18,12 +18,19 @@ import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 
-const navigation = [
-  { label: '患者查询', index: '/workstation/patients', permission: 'patient:manage' },
-  { label: '就诊建档', index: '/workstation/visits/new', permission: 'visit:manage' },
-  { label: '分诊评估', index: '/workstation/triage/assessments/new', permission: 'triage:assess' },
-  { label: '诊室叫号', index: '/workstation/queue-call', permission: 'queue:call' }
-]
+const navigation = computed(() => {
+  const items = [
+    { label: '诊室叫号', index: '/workstation/queue-call', permission: 'queue:call' }
+  ]
+  if (authStore.hasPermission('triage:assess')) {
+    items.push({
+      label: '分诊评估',
+      index: '/workstation/triage/assessments/new',
+      permission: 'triage:assess'
+    })
+  }
+  return items
+})
 
 const contextItems = computed(() => {
   const items: string[] = []

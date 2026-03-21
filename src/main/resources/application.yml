@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: triage-queue
+  config:
+    import: optional:classpath:application-ai.yml
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/triage_queue?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
     username: ${DB_USERNAME:root}
@@ -64,6 +66,14 @@ app:
     call-next-retry-times: 3
     calling-ttl-seconds: 1800
     allow-dept-fallback: true
+  ai:
+    enabled: ${AI_ENABLED:false}
+    provider: ${AI_PROVIDER:moonshot}
+    model: ${MOONSHOT_MODEL:${AI_MODEL:moonshot-v1-8k}}
+    connect-timeout-ms: ${AI_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${AI_READ_TIMEOUT_MS:5000}
+    temperature: ${AI_TEMPERATURE:0.2}
+    max-tokens: ${AI_MAX_TOKENS:300}
 
 logging:
   pattern:

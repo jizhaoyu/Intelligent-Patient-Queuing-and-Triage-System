@@ -17,5 +17,11 @@ public class PatientVO {
     private String idCard;
     private String allergyHistory;
     private String specialTags;
+    private Long currentVisitId;
+    private String currentVisitNo;
+    private String currentStatus;
+    private Long currentDeptId;
+    private Long currentRoomId;
+    private LocalDateTime statusUpdatedTime;
     private LocalDateTime createdTime;
 }

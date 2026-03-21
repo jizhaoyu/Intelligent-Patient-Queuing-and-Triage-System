@@ -8,11 +8,13 @@
     "dev:admin": "vite --mode admin",
     "dev:workstation": "vite --mode workstation",
     "dev:screen": "vite --mode screen",
+    "dev:kiosk": "vite --mode kiosk",
     "typecheck": "vue-tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "build:admin": "npm run typecheck && vite build --mode admin",
     "build:workstation": "npm run typecheck && vite build --mode workstation",
     "build:screen": "npm run typecheck && vite build --mode screen",
+    "build:kiosk": "npm run typecheck && vite build --mode kiosk",
     "preview": "vite preview"
   },
   "dependencies": {

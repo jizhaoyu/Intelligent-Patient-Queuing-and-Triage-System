@@ -1,19 +1,15 @@
 import type { UserProfile } from '@/types/auth'
 
 export type PortalSurface = 'all' | 'admin' | 'workstation' | 'screen'
-export type RouteSurface = 'login' | 'admin' | 'workstation' | 'screen'
+export type RouteSurface = 'login' | 'admin' | 'workstation' | 'screen' | 'patient'
 
 const ROLE_HOME_MAP: Record<string, string> = {
   ADMIN: '/admin/dashboard',
-  TRIAGE_NURSE: '/workstation/triage/assessments/new',
-  GUIDE_DESK: '/workstation/visits/new',
   DOCTOR: '/workstation/queue-call'
 }
 
 const ROLE_SURFACE_MAP: Record<string, 'admin' | 'workstation'> = {
   ADMIN: 'admin',
-  TRIAGE_NURSE: 'workstation',
-  GUIDE_DESK: 'workstation',
   DOCTOR: 'workstation'
 }
 
@@ -27,7 +23,7 @@ const PORTAL_LABEL_MAP: Record<PortalSurface, string> = {
 const PORTAL_SURFACE_SET = new Set<PortalSurface>(['all', 'admin', 'workstation', 'screen'])
 
 const rawPortalSurface = import.meta.env.VITE_APP_SURFACE
-const defaultScreenRoute = import.meta.env.VITE_DEFAULT_SCREEN_ROUTE || '/screen/dept/1'
+export const defaultScreenRoute = import.meta.env.VITE_DEFAULT_SCREEN_ROUTE || '/screen/dept/1'
 
 export const portalSurface: PortalSurface = PORTAL_SURFACE_SET.has(rawPortalSurface as PortalSurface)
   ? (rawPortalSurface as PortalSurface)
@@ -35,6 +31,7 @@ export const portalSurface: PortalSurface = PORTAL_SURFACE_SET.has(rawPortalSurf
 
 export const portalDisplayName = PORTAL_LABEL_MAP[portalSurface]
 export const portalTokenKey = import.meta.env.VITE_TOKEN_KEY?.trim() || `triage_queue.token.${portalSurface}`
+export const loginEntryRoute = portalSurface === 'screen' ? defaultScreenRoute : '/login'
 
 export function resolveRoleDefaultRoute(roleCode?: string | null) {
   if (!roleCode) {
@@ -75,10 +72,6 @@ export function resolvePortalHomeRoute(profile?: UserProfile | null) {
     case 'screen':
       if (!profile.permissions.includes('dashboard:view')) {
         return '/login'
-      }
-
-      if (profile.roomId) {
-        return `/screen/room/${profile.roomId}`
       }
 
       if (profile.deptId) {

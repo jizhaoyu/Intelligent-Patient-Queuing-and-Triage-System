@@ -4,6 +4,7 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
 import { AUTH_UNAUTHORIZED_EVENT } from './api/http'
+import { loginEntryRoute } from './config/portal'
 import { pinia } from './stores'
 import { useAuthStore } from './stores/auth'
 import './styles/index.css'
@@ -18,8 +19,8 @@ const authStore = useAuthStore(pinia)
 
 window.addEventListener(AUTH_UNAUTHORIZED_EVENT, async () => {
   authStore.reset()
-  if (router.currentRoute.value.path !== '/login') {
-    await router.replace('/login')
+  if (router.currentRoute.value.path !== loginEntryRoute) {
+    await router.replace(loginEntryRoute)
   }
 })
 

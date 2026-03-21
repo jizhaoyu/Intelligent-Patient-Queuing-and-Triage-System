@@ -81,7 +81,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { getPatientList } from '@/api/patient'
@@ -89,6 +89,7 @@ import { arriveVisit, createVisit } from '@/api/visit'
 import type { Patient } from '@/types/patient'
 import type { Visit } from '@/types/visit'
 
+const route = useRoute()
 const router = useRouter()
 const patientLoading = ref(false)
 const submitting = ref(false)
@@ -108,6 +109,13 @@ async function searchPatients() {
   patientLoading.value = true
   try {
     patients.value = await getPatientList(patientKeyword.value || undefined)
+    const preferredPatientId = Number(route.query.patientId || 0)
+    if (preferredPatientId) {
+      const matched = patients.value.find((item) => item.id === preferredPatientId)
+      if (matched) {
+        form.patientId = matched.id
+      }
+    }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '获取患者列表失败')
   } finally {
@@ -153,5 +161,11 @@ async function handleArrive() {
   }
 }
 
-onMounted(searchPatients)
+onMounted(() => {
+  const preferredPatientId = Number(route.query.patientId || 0)
+  if (preferredPatientId) {
+    patientKeyword.value = String(route.query.keyword || '')
+  }
+  void searchPatients()
+})
 </script>

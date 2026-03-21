@@ -11,6 +11,7 @@ public class RoomCurrentVO {
     private String ticketNo;
     private String status;
     private Long patientId;
+    private String patientName;
     private Integer triageLevel;
     private Integer priorityScore;
 }

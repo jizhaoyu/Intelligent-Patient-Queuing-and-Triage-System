@@ -1,16 +1,14 @@
-# 患者智能排队分诊系统接口说明
-
-本文档根据当前后端控制器整理，适合前端联调、接口浏览和功能梳理。
+# 患者智能排队分诊系统 API 接口说明
 
 ## 1. 基本说明
 
 - 接口前缀：`/api`
-- 返回格式：统一使用 `Result<T>`
-- 认证方式：登录后在请求头中携带 Token
+- 返回结构：统一使用 `Result<T>`
+- 认证方式：除患者查询/自助取号等公开接口外，其余接口默认需要登录
 - 推荐请求头：`Authorization: Bearer <token>`
 - 数据格式：`application/json`
 
-### 统一返回结构
+统一返回示例：
 
 ```json
 {
@@ -23,21 +21,39 @@
 
 字段说明：
 
-- `success`：是否成功
-- `code`：业务状态码
-- `message`：提示信息
-- `data`：业务数据
+| 字段 | 说明 |
+| --- | --- |
+| `success` | 是否成功 |
+| `code` | 业务状态码 |
+| `message` | 提示信息 |
+| `data` | 业务数据 |
+
+### 1.1 本轮关键口径
+
+- `POST /api/patient-queue/enroll` 已正式定义为“院内自助机取号”接口。
+- 患者端不引入 PATIENT 角色或 JWT，公开接口继续使用 `patientNo + phoneSuffix` 校验。
+- `POST /api/queues/tickets` 继续保留，但产品定位统一为“异常补录 / 管理员修复入口”。
+- 队列与事件返回增加来源审计字段：
+  - `sourceType`
+  - `sourceRemark`
+  - `lastAdjustReason`（仅票据相关返回）
+
+### 1.2 队列来源枚举
+
+| 值 | 含义 |
+| --- | --- |
+| `TRIAGE_AUTO` | 分诊自动入队 |
+| `KIOSK` | 院内自助机正式取号 |
+| `MANUAL_REPAIR` | 异常补录 / 管理员修复 |
 
 ---
 
 ## 2. 认证接口
 
-### 2.1 用户登录
+### 2.1 `POST /api/auth/login`
 
-- 方法：`POST`
-- 路径：`/api/auth/login`
-- 说明：用户登录并获取访问令牌
-- 权限：无需登录
+说明：用户登录并获取访问令牌。  
+权限：公开接口
 
 请求示例：
 
@@ -48,159 +64,157 @@
 }
 ```
 
-请求字段：
+返回 `data` 主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `token` | 访问令牌 |
+| `tokenType` | 令牌类型，通常为 `Bearer` |
+| `expireSeconds` | 过期秒数 |
+| `profile` | 当前登录用户信息 |
+
+### 2.2 `POST /api/auth/logout`
+
+说明：退出登录。  
+权限：已登录
+
+### 2.3 `GET /api/auth/me`
+
+说明：获取当前登录用户信息与权限。  
+权限：已登录
+
+返回 `profile` 主要字段：
+
+- `userId`
+- `username`
+- `nickname`
+- `roleCode`
+- `deptId`
+- `roomId`
+- `permissions`
+
+---
+
+## 3. 患者与就诊接口
+
+### 3.1 `POST /api/patients`
+
+说明：创建患者档案。  
+权限：`patient:manage`
+
+请求主要字段：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| username | String | 是 | 用户名 |
-| password | String | 是 | 密码 |
+| `patientName` | String | 是 | 患者姓名 |
+| `gender` | String | 否 | 性别 |
+| `birthDate` | LocalDate | 否 | 出生日期 |
+| `phone` | String | 否 | 手机号 |
+| `idCard` | String | 否 | 身份证号 |
+| `allergyHistory` | String | 否 | 过敏史 |
+| `specialTags` | String | 否 | 特殊标签 |
 
-返回 `data` 主要字段：
+### 3.2 `GET /api/patients/{id}`
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| token | String | 访问令牌 |
-| tokenType | String | 令牌类型，通常为 `Bearer` |
-| expireSeconds | Long | 过期秒数 |
-| profile | Object | 当前登录用户信息 |
+说明：查询患者详情。  
+权限：`patient:manage`
 
-`profile` 主要字段：`userId`、`username`、`nickname`、`roleCode`、`deptId`、`roomId`、`permissions`
+### 3.3 `GET /api/patients`
 
----
-
-### 2.2 用户登出
-
-- 方法：`POST`
-- 路径：`/api/auth/logout`
-- 说明：退出登录
-- 权限：已登录
-
-返回：`data` 为空
-
----
-
-### 2.3 获取当前用户信息
-
-- 方法：`GET`
-- 路径：`/api/auth/me`
-- 说明：获取当前登录用户资料与权限
-- 权限：已登录
-
-返回 `data` 主要字段：
-
-- `userId`：用户ID
-- `username`：用户名
-- `nickname`：昵称
-- `roleCode`：角色编码
-- `deptId`：所属科室ID
-- `roomId`：所属诊室ID
-- `permissions`：权限列表
-
----
-
-## 3. 患者管理接口
-
-### 3.1 新增患者
-
-- 方法：`POST`
-- 路径：`/api/patients`
-- 说明：创建患者档案
-- 权限：`patient:manage`
-
-请求示例：
-
-```json
-{
-  "patientName": "张三",
-  "gender": "男",
-  "birthDate": "1990-01-01",
-  "phone": "13800000000",
-  "idCard": "110101199001010011",
-  "allergyHistory": "青霉素过敏",
-  "specialTags": "老人"
-}
-```
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| patientName | String | 是 | 患者姓名 |
-| gender | String | 否 | 性别 |
-| birthDate | LocalDate | 否 | 出生日期，格式 `yyyy-MM-dd` |
-| phone | String | 否 | 手机号 |
-| idCard | String | 否 | 身份证号 |
-| allergyHistory | String | 否 | 过敏史 |
-| specialTags | String | 否 | 特殊标签 |
-
-返回 `data` 主要字段：`id`、`patientNo`、`patientName`、`gender`、`birthDate`、`phone`、`idCard`、`allergyHistory`、`specialTags`、`createdTime`
-
----
-
-### 3.2 获取患者详情
-
-- 方法：`GET`
-- 路径：`/api/patients/{id}`
-- 说明：根据患者ID查询详情
-- 权限：`patient:manage`
-
-路径参数：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| id | Long | 患者ID |
-
----
-
-### 3.3 查询患者列表
-
-- 方法：`GET`
-- 路径：`/api/patients`
-- 说明：按关键字查询患者列表
-- 权限：`patient:manage`
+说明：按关键字查询患者列表。  
+权限：`patient:manage`
 
 查询参数：
 
-| 参数 | 类型 | 必填 | 说明 |
+| 参数 | 说明 |
+| --- | --- |
+| `keyword` | 姓名、患者编号、手机号等模糊搜索关键字 |
+
+### 3.4 `PUT /api/patients/{id}`
+
+说明：更新患者档案。  
+权限：`patient:manage`
+
+### 3.5 `POST /api/visits`
+
+说明：创建本次就诊记录。  
+权限：`visit:manage`
+
+请求主要字段：
+
+| 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| keyword | String | 否 | 关键字，可用于模糊搜索 |
+| `patientId` | Long | 是 | 患者 ID |
+| `chiefComplaint` | String | 是 | 主诉 |
 
-返回：`data` 为患者列表
+### 3.6 `GET /api/visits/{id}`
 
----
+说明：查询就诊详情。  
+权限：`visit:manage`
 
-### 3.4 更新患者信息
+### 3.7 `POST /api/visits/{id}/arrive`
 
-- 方法：`PUT`
-- 路径：`/api/patients/{id}`
-- 说明：修改患者档案
-- 权限：`patient:manage`
-
-路径参数：
-
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| id | Long | 患者ID |
-
-请求体字段与“新增患者”一致。
+说明：患者到诊。  
+权限：`visit:manage`
 
 ---
 
-## 4. 到诊管理接口
+## 4. 分诊接口
 
-### 4.1 创建到诊记录
+### 4.1 `POST /api/triage/assessments`
 
-- 方法：`POST`
-- 路径：`/api/visits`
-- 说明：患者挂号/到诊登记
-- 权限：`visit:manage`
+说明：创建分诊评估。  
+权限：`triage:assess`
+
+请求字段沿用现有评估模型，包括生命体征、年龄、性别、特殊人群标签、人工调分和评估人等。
+
+返回 `data` 关键字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `triageLevel` | 分诊等级 |
+| `recommendDeptId` | 推荐科室 ID |
+| `recommendDeptName` | 推荐科室名称 |
+| `priorityScore` | 优先分 |
+| `queueCreated` | 是否已自动入队 |
+| `queueTicketNo` | 自动入队生成的票号 |
+| `queueStatus` | 自动入队后的队列状态 |
+| `queueDeptId` | 入队科室 ID |
+| `queueDeptName` | 入队科室名称 |
+| `queueRoomId` | 入队诊室 ID |
+| `queueRoomName` | 入队诊室名称 |
+
+说明：
+
+- 首次分诊和重评估都会尝试走自动入队链路。
+- 推荐科室为空时，自动入队失败并返回明确错误。
+
+### 4.2 `GET /api/triage/assessments/{id}`
+
+说明：查询评估详情。  
+权限：`triage:assess`
+
+### 4.3 `POST /api/triage/assessments/{id}/reassess`
+
+说明：基于原评估重新分诊。  
+权限：`triage:assess`
+
+---
+
+## 5. 患者公开接口
+
+### 5.1 `POST /api/patient-queue/query`
+
+说明：患者查询当前排队进度。  
+权限：公开接口  
+请求结构保持不变，继续使用 `patientNo + phoneSuffix`
 
 请求示例：
 
 ```json
 {
-  "patientId": 1,
-  "chiefComplaint": "发热、咳嗽两天"
+  "patientNo": "P1234567890",
+  "phoneSuffix": "1234"
 }
 ```
 
@@ -208,71 +222,51 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| patientId | Long | 是 | 患者ID |
-| chiefComplaint | String | 是 | 主诉 |
+| `patientNo` | String | 是 | 患者编号 |
+| `phoneSuffix` | String | 是 | 手机号后 4 位 |
 
 返回 `data` 主要字段：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| id | Long | 到诊ID |
-| patientId | Long | 患者ID |
-| visitNo | String | 到诊单号 |
-| status | String | 状态 |
-| registerTime | LocalDateTime | 登记时间 |
-| arrivalTime | LocalDateTime | 到达时间 |
-| chiefComplaint | String | 主诉 |
-| currentDeptId | Long | 当前科室ID |
-| currentRoomId | Long | 当前诊室ID |
+| 字段 | 说明 |
+| --- | --- |
+| `patientName` | 脱敏后的患者姓名 |
+| `patientNo` | 患者编号 |
+| `patientId` | 患者 ID |
+| `visitId` / `visitNo` | 当前就诊信息 |
+| `visitStatus` / `visitStatusText` | 当前就诊状态 |
+| `queueStatus` / `queueStatusText` | 当前排队状态；无票据时为 `NONE` |
+| `queueMessage` | 当前状态提示文案 |
+| `ticketNo` | 当前票号 |
+| `deptId` / `deptName` | 当前科室 |
+| `roomId` / `roomName` | 当前诊室 |
+| `doctorName` | 当前诊室医生 |
+| `rank` | 当前排位 |
+| `waitingCount` | 前方人数 |
+| `estimatedWaitMinutes` | 预计等待分钟数 |
+| `waitedMinutes` | 已等待分钟数 |
+| `triageLevel` | 分诊等级 |
+| `enqueueTime` / `callTime` / `completeTime` | 排队关键时间点 |
+| `hasActiveQueue` | 是否存在有效排队 |
 
----
+补充说明：
 
-### 4.2 查询到诊详情
+- 当已分诊但尚未生成票据时，接口仍返回成功，并通过 `queueStatus = NONE` 与 `queueMessage` 提示当前情况。
+- 当患者编号或手机号后 4 位校验失败时，返回统一模糊提示，不泄露患者是否存在。
 
-- 方法：`GET`
-- 路径：`/api/visits/{id}`
-- 说明：根据到诊ID查询详情
-- 权限：`visit:manage`
+### 5.2 `POST /api/patient-queue/enroll`
 
----
-
-### 4.3 患者到达登记
-
-- 方法：`POST`
-- 路径：`/api/visits/{id}/arrive`
-- 说明：将到诊记录标记为已到达
-- 权限：`visit:manage`
-
----
-
-## 5. 分诊接口
-
-### 5.1 创建分诊评估
-
-- 方法：`POST`
-- 路径：`/api/triage/assessments`
-- 说明：为患者进行分诊评估
-- 权限：`triage:assess`
+说明：院内自助机正式取号接口。  
+权限：公开接口  
+定位：仅面向院内自助机，不是移动端患者账号入口
 
 请求示例：
 
 ```json
 {
-  "visitId": 1,
-  "symptomTags": "发热,咳嗽",
-  "bodyTemperature": 38.5,
-  "heartRate": 105,
-  "bloodPressure": "120/80",
-  "bloodOxygen": 97,
-  "age": 35,
-  "gender": "男",
-  "elderly": false,
-  "pregnant": false,
-  "child": false,
-  "disabled": false,
-  "revisit": false,
-  "manualAdjustScore": 0,
-  "assessor": "nurse01"
+  "patientNo": "P1234567890",
+  "phoneSuffix": "1234",
+  "deptId": 101,
+  "chiefComplaint": "发热 2 天，咳嗽"
 }
 ```
 
@@ -280,98 +274,28 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| visitId | Long | 是 | 到诊ID |
-| symptomTags | String | 否 | 症状标签，建议逗号分隔 |
-| bodyTemperature | BigDecimal | 否 | 体温 |
-| heartRate | Integer | 否 | 心率 |
-| bloodPressure | String | 否 | 血压 |
-| bloodOxygen | Integer | 否 | 血氧 |
-| age | Integer | 否 | 年龄 |
-| gender | String | 否 | 性别 |
-| elderly | Boolean | 否 | 是否老人 |
-| pregnant | Boolean | 否 | 是否孕妇 |
-| child | Boolean | 否 | 是否儿童 |
-| disabled | Boolean | 否 | 是否残障 |
-| revisit | Boolean | 否 | 是否复诊 |
-| manualAdjustScore | Integer | 否 | 人工调节分值 |
-| assessor | String | 否 | 评估人 |
+| `patientNo` | String | 是 | 患者编号 |
+| `phoneSuffix` | String | 是 | 手机号后 4 位 |
+| `deptId` | Long | 是 | 本次就诊科室 |
+| `chiefComplaint` | String | 否 | 主诉 |
 
-返回 `data` 主要字段：`id`、`visitId`、`symptomTags`、`bodyTemperature`、`heartRate`、`bloodPressure`、`bloodOxygen`、`triageLevel`、`recommendDeptId`、`priorityScore`、`fastTrack`、`manualAdjustScore`、`assessor`、`assessedTime`
+行为说明：
+
+- 只允许既有患者取号，不再自动创建患者档案。
+- 若无法识别患者或校验失败，统一返回“请前往导诊台处理”。
+- 若已存在有效排队，直接返回当前排队视图，不重复建票。
+- 若无当前有效就诊，可自动创建本次 visit、自动到诊，再生成自助机评估并自动入队。
+- 返回结构与 `POST /api/patient-queue/query` 一致。
 
 ---
 
-### 5.2 获取分诊评估详情
+## 6. 排队接口
 
-- 方法：`GET`
-- 路径：`/api/triage/assessments/{id}`
-- 说明：查询分诊评估结果
-- 权限：`triage:assess`
+### 6.1 `POST /api/queues/tickets`
 
----
-
-### 5.3 重新评估
-
-- 方法：`POST`
-- 路径：`/api/triage/assessments/{id}/reassess`
-- 说明：基于原评估记录重新分诊
-- 权限：`triage:assess`
-
-说明：请求体与“创建分诊评估”一致。
-
----
-
-## 6. 分诊规则接口
-
-### 6.1 获取分诊规则列表
-
-- 方法：`GET`
-- 路径：`/api/triage/rules`
-- 说明：查看当前分诊规则
-- 权限：`triage:rule`
-
-返回 `data` 为规则列表，主要字段：
-
-- `id`
-- `ruleCode`
-- `ruleName`
-- `symptomKeyword`
-- `triageLevel`
-- `recommendDeptId`
-- `specialWeight`
-- `fastTrack`
-- `enabled`
-
----
-
-### 6.2 更新分诊规则
-
-- 方法：`PUT`
-- 路径：`/api/triage/rules/{id}`
-- 说明：修改分诊规则配置
-- 权限：`triage:rule`
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| ruleName | String | 否 | 规则名称 |
-| symptomKeyword | String | 否 | 症状关键词 |
-| triageLevel | Integer | 否 | 分诊等级 |
-| recommendDeptId | Long | 否 | 推荐科室ID |
-| specialWeight | Integer | 否 | 特殊权重 |
-| fastTrack | Integer | 否 | 是否快速通道 |
-| enabled | Integer | 否 | 是否启用 |
-
----
-
-## 7. 排队接口
-
-### 7.1 创建排队票据
-
-- 方法：`POST`
-- 路径：`/api/queues/tickets`
-- 说明：根据到诊和分诊结果生成排队票据
-- 权限：`queue:manage`
+说明：创建排队票据。  
+权限：`queue:manage`  
+产品定位：异常补录 / 管理员修复入口，不属于主 happy path
 
 请求示例：
 
@@ -387,163 +311,200 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| visitId | Long | 是 | 到诊ID |
-| assessmentId | Long | 是 | 分诊评估ID |
-| roomId | Long | 否 | 指定诊室ID |
+| `visitId` | Long | 是 | 就诊 ID |
+| `assessmentId` | Long | 是 | 分诊评估 ID |
+| `roomId` | Long | 否 | 指定诊室 ID |
 
-返回 `data` 主要字段：`ticketNo`、`visitId`、`patientId`、`assessmentId`、`deptId`、`roomId`、`triageLevel`、`priorityScore`、`status`、`recallCount`、`fastTrack`、`waitingCount`、`rank`、`estimatedWaitMinutes`、`enqueueTime`、`callTime`、`completeTime`
+### 6.2 `GET /api/queues/tickets/{ticketNo}`
 
----
-
-### 7.2 查询票据详情
-
-- 方法：`GET`
-- 路径：`/api/queues/tickets/{ticketNo}`
-- 说明：根据票号查看排队详情
-- 权限：`queue:manage` 或 `queue:call`
-
----
-
-### 7.3 查询科室候诊列表
-
-- 方法：`GET`
-- 路径：`/api/queues/depts/{deptId}/waiting`
-- 说明：查看指定科室当前候诊情况
-- 权限：`queue:manage` 或 `dashboard:view`
+说明：查询票据详情。  
+权限：`queue:manage` 或 `queue:call`
 
 返回 `data` 主要字段：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| deptId | Long | 科室ID |
-| waitingCount | Long | 候诊人数 |
-| waitingTickets | List<QueueTicketVO> | 候诊票据列表 |
+| 字段 | 说明 |
+| --- | --- |
+| `ticketNo` | 票号 |
+| `visitId` | 就诊 ID |
+| `patientId` / `patientNo` / `patientName` | 患者信息 |
+| `assessmentId` | 评估 ID |
+| `deptId` / `deptName` | 科室信息 |
+| `roomId` / `roomName` | 诊室信息 |
+| `doctorName` | 诊室医生 |
+| `triageLevel` | 分诊等级 |
+| `priorityScore` | 优先分 |
+| `status` | 队列状态 |
+| `recallCount` | 复呼次数 |
+| `fastTrack` | 是否快速通道 |
+| `sourceType` | 来源类型 |
+| `sourceRemark` | 来源说明 |
+| `lastAdjustReason` | 最近一次调整原因 |
+| `waitingCount` | 候诊人数 |
+| `rank` | 当前排位 |
+| `estimatedWaitMinutes` | 预计等待分钟数 |
+| `waitedMinutes` | 已等待分钟数 |
+| `enqueueTime` / `callTime` / `completeTime` | 关键时间点 |
 
----
+### 6.3 `GET /api/queues/waiting`
 
-### 7.4 叫号下一位
+说明：查询当前候诊摘要。  
+权限：登录后可用  
+查询参数：`deptId`（可选，`<= 0` 视为不限制）
 
-- 方法：`POST`
-- 路径：`/api/queues/rooms/{roomId}/call-next`
-- 说明：诊室叫下一位患者
-- 权限：`queue:call`
+### 6.4 `GET /api/queues/active`
 
----
+说明：查询当前活跃票据列表（`WAITING` + `CALLING`）。  
+权限：登录后可用  
+查询参数：`deptId`（可选）
 
-### 7.5 重呼
+### 6.5 `GET /api/queues/depts/{deptId}/waiting`
 
-- 方法：`POST`
-- 路径：`/api/queues/tickets/{ticketNo}/recall`
-- 说明：对指定票据再次叫号
-- 权限：`queue:call`
+说明：查询指定科室候诊摘要。  
+权限：登录后可用
 
----
+### 6.6 `POST /api/queues/rooms/{roomId}/call-next`
 
-### 7.6 标记过号
+说明：诊室叫下一位。  
+权限：`queue:call`
 
-- 方法：`POST`
-- 路径：`/api/queues/tickets/{ticketNo}/missed`
-- 说明：将票据标记为过号
-- 权限：`queue:call`
+### 6.7 `POST /api/queues/tickets/{ticketNo}/recall`
 
----
+说明：复呼。  
+权限：`queue:call`
 
-### 7.7 完成就诊
+### 6.8 `POST /api/queues/tickets/{ticketNo}/missed`
 
-- 方法：`POST`
-- 路径：`/api/queues/tickets/{ticketNo}/complete`
-- 说明：就诊完成后结束本次排队
-- 权限：`queue:call`
+说明：标记过号。  
+权限：`queue:call`
 
----
+### 6.9 `POST /api/queues/tickets/{ticketNo}/complete`
 
-### 7.8 取消排队
+说明：完成就诊。  
+权限：`queue:call`
 
-- 方法：`POST`
-- 路径：`/api/queues/tickets/{ticketNo}/cancel`
-- 说明：取消指定票据
-- 权限：`queue:manage`
+### 6.10 `POST /api/queues/tickets/{ticketNo}/cancel`
 
----
+说明：取消排队。  
+权限：`queue:manage`
 
-### 7.9 查询排队位次
+### 6.11 `GET /api/queues/tickets/{ticketNo}/rank`
 
-- 方法：`GET`
-- 路径：`/api/queues/tickets/{ticketNo}/rank`
-- 说明：查询当前票据排队位置和预计等待时间
-- 权限：`queue:manage` 或 `dashboard:view`
+说明：查询票据排位与预计等待时间。  
+权限：`queue:manage` 或 `dashboard:view`
 
-返回 `data` 主要字段：
+返回字段：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| ticketNo | String | 票号 |
-| status | String | 当前状态 |
-| rank | Long | 当前排位 |
-| waitingCount | Long | 候诊人数 |
-| estimatedWaitMinutes | Long | 预计等待分钟数 |
+| 字段 | 说明 |
+| --- | --- |
+| `ticketNo` | 票号 |
+| `status` | 当前状态 |
+| `rank` | 当前排位 |
+| `waitingCount` | 候诊人数 |
+| `estimatedWaitMinutes` | 预计等待分钟数 |
 
----
+### 6.12 `GET /api/queues/events`
 
-## 8. 看板接口
+说明：查询排队事件日志。  
+权限：`queue:manage`
 
-### 8.1 科室看板汇总
+查询参数：
 
-- 方法：`GET`
-- 路径：`/api/dashboard/depts/{deptId}/summary`
-- 说明：查看某科室的候诊、叫号、完成等统计信息
-- 权限：`dashboard:view`
-
-返回 `data` 主要字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| deptId | Long | 科室ID |
-| waitingCount | Long | 候诊人数 |
-| callingCount | Long | 叫号中人数 |
-| completedCount | Long | 已完成人数 |
-| averageWaitMinutes | Long | 平均等待时长 |
-| timeoutHighPriorityCount | Long | 超时高优先级人数 |
-
----
-
-### 8.2 诊室当前叫号信息
-
-- 方法：`GET`
-- 路径：`/api/dashboard/rooms/{roomId}/current`
-- 说明：查看某诊室当前正在处理的票据
-- 权限：`dashboard:view`
+| 参数 | 说明 |
+| --- | --- |
+| `ticketNo` | 按票号过滤 |
+| `eventType` | 按事件类型过滤 |
 
 返回 `data` 主要字段：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| roomId | Long | 诊室ID |
-| ticketNo | String | 当前票号 |
-| status | String | 当前状态 |
-| patientId | Long | 患者ID |
-| triageLevel | Integer | 分诊等级 |
-| priorityScore | Integer | 优先级分数 |
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 日志 ID |
+| `ticketNo` | 票号 |
+| `eventType` | 事件类型 |
+| `fromStatus` / `toStatus` | 状态流转 |
+| `visitId` / `patientId` / `deptId` / `roomId` | 关联业务标识 |
+| `operatorName` | 操作人 |
+| `sourceType` | 来源类型 |
+| `sourceRemark` | 来源说明 |
+| `remark` | 备注 |
+| `createdTime` | 创建时间 |
+
+### 6.13 `GET /api/queues/exceptions/unqueued-triaged`
+
+说明：查询“已分诊未入队”异常列表。  
+权限：`queue:manage`
+
+查询参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `deptId` | 科室过滤，可选 |
+
+返回 `data` 主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `visitId` / `visitNo` | 就诊信息 |
+| `patientId` / `patientNo` / `patientName` | 患者信息 |
+| `chiefComplaint` | 主诉 |
+| `triageLevel` | 分诊等级 |
+| `assessmentId` | 评估 ID |
+| `assessedTime` | 分诊时间 |
+| `deptId` / `deptName` | 当前科室 |
+| `recommendDeptId` / `recommendDeptName` | 推荐科室 |
+| `reason` | 异常说明 |
 
 ---
 
-## 9. 建议联调顺序
+## 7. 看板接口
 
-首次联调时，建议按下面顺序调用：
+### 7.1 `GET /api/dashboard/summary`
 
-1. 登录 `/api/auth/login`
-2. 新增患者 `/api/patients`
-3. 创建到诊 `/api/visits`
-4. 创建分诊评估 `/api/triage/assessments`
-5. 创建排队票据 `/api/queues/tickets`
-6. 查询排队位次 `/api/queues/tickets/{ticketNo}/rank`
-7. 诊室叫号 `/api/queues/rooms/{roomId}/call-next`
-8. 完成就诊 `/api/queues/tickets/{ticketNo}/complete`
+说明：查询后台运营看板摘要，可选按科室过滤。  
+权限：登录后可用  
+查询参数：`deptId`
+
+### 7.2 `GET /api/dashboard/depts/{deptId}/summary`
+
+说明：查询指定科室看板摘要。  
+权限：登录后可用
+
+返回 `data` 主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `deptId` | 科室 ID |
+| `waitingCount` | 候诊人数 |
+| `callingCount` | 叫号中人数 |
+| `completedCount` | 已完成人数 |
+| `averageWaitMinutes` | 平均等待时长 |
+| `timeoutHighPriorityCount` | 高优先级超时人数 |
+| `unqueuedTriagedCount` | 已分诊未入队异常数量 |
+
+### 7.3 `GET /api/dashboard/rooms/{roomId}/current`
+
+说明：查询指定诊室当前叫号信息。  
+权限：登录后可用
 
 ---
 
-## 10. 说明
+## 8. 推荐联调顺序
 
-- 本文档基于当前控制器代码整理。
-- 若后续补充 Swagger、Knife4j 或新增接口，建议同步更新本文件。
-- 如果需要，我还可以继续补一版“带完整请求/响应示例”的详细接口文档。
+当前版本推荐按以下顺序联调：
+
+1. 登录：`POST /api/auth/login`
+2. 新建患者：`POST /api/patients`
+3. 新建就诊并到诊：`POST /api/visits` -> `POST /api/visits/{id}/arrive`
+4. 创建分诊评估：`POST /api/triage/assessments`
+5. 读取自动入队结果：从分诊返回中获取 `queueTicketNo / queueStatus`
+6. 查询票据详情与排位：`GET /api/queues/tickets/{ticketNo}`、`GET /api/queues/tickets/{ticketNo}/rank`
+7. 诊室叫号与状态流转：`call-next / recall / missed / complete / cancel`
+8. 查询事件日志与异常治理：`GET /api/queues/events`、`GET /api/queues/exceptions/unqueued-triaged`
+9. 患者侧验证：
+   - 查询：`POST /api/patient-queue/query`
+   - 院内自助机取号：`POST /api/patient-queue/enroll`
+
+说明：
+
+- 主 happy path 已改为“分诊自动入队”，联调时不再把 `POST /api/queues/tickets` 当作正常流程的一部分。
+- `POST /api/queues/tickets` 只应在异常治理或管理员修复场景下使用。

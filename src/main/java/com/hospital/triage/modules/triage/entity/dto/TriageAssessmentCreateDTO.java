@@ -1,6 +1,5 @@
 package com.hospital.triage.modules.triage.entity.dto;
 
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -8,8 +7,8 @@ import java.math.BigDecimal;
 @Data
 public class TriageAssessmentCreateDTO {
 
-    @NotNull(message = "到诊ID不能为空")
     private Long visitId;
+    private String chiefComplaint;
     private String symptomTags;
     private BigDecimal bodyTemperature;
     private Integer heartRate;

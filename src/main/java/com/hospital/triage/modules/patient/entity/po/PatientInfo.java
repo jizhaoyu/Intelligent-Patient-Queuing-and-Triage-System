@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -20,4 +21,10 @@ public class PatientInfo extends BaseEntity {
     private String idCard;
     private String allergyHistory;
     private String specialTags;
+    private String currentStatus;
+    private Long currentVisitId;
+    private String currentVisitNo;
+    private Long currentDeptId;
+    private Long currentRoomId;
+    private LocalDateTime statusUpdatedTime;
 }

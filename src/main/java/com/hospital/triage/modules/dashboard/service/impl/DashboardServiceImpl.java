@@ -4,8 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.hospital.triage.modules.dashboard.entity.vo.DeptDashboardSummaryVO;
 import com.hospital.triage.modules.dashboard.entity.vo.RoomCurrentVO;
 import com.hospital.triage.modules.dashboard.service.DashboardService;
+import com.hospital.triage.modules.patient.entity.po.PatientInfo;
+import com.hospital.triage.modules.patient.mapper.PatientInfoMapper;
 import com.hospital.triage.modules.queue.entity.po.QueueTicket;
 import com.hospital.triage.modules.queue.mapper.QueueTicketMapper;
+import com.hospital.triage.modules.queue.service.QueueExceptionService;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -17,15 +20,21 @@ import java.util.List;
 public class DashboardServiceImpl implements DashboardService {
 
     private final QueueTicketMapper queueTicketMapper;
+    private final PatientInfoMapper patientInfoMapper;
+    private final QueueExceptionService queueExceptionService;
 
-    public DashboardServiceImpl(QueueTicketMapper queueTicketMapper) {
+    public DashboardServiceImpl(QueueTicketMapper queueTicketMapper,
+                                PatientInfoMapper patientInfoMapper,
+                                QueueExceptionService queueExceptionService) {
         this.queueTicketMapper = queueTicketMapper;
+        this.patientInfoMapper = patientInfoMapper;
+        this.queueExceptionService = queueExceptionService;
     }
 
     @Override
     public DeptDashboardSummaryVO deptSummary(Long deptId) {
         List<QueueTicket> tickets = queueTicketMapper.selectList(new LambdaQueryWrapper<QueueTicket>()
-                .eq(QueueTicket::getDeptId, deptId));
+                .eq(deptId != null, QueueTicket::getDeptId, deptId));
         long waitingCount = tickets.stream().filter(ticket -> "WAITING".equals(ticket.getStatus())).count();
         long callingCount = tickets.stream().filter(ticket -> "CALLING".equals(ticket.getStatus())).count();
         long completedCount = tickets.stream().filter(ticket -> "COMPLETED".equals(ticket.getStatus())).count();
@@ -45,6 +54,7 @@ public class DashboardServiceImpl implements DashboardService {
                 .completedCount(completedCount)
                 .averageWaitMinutes(averageWaitMinutes)
                 .timeoutHighPriorityCount(timeoutHighPriorityCount)
+                .unqueuedTriagedCount(queueExceptionService.countUnqueuedTriaged(deptId))
                 .build();
     }
 
@@ -59,11 +69,13 @@ public class DashboardServiceImpl implements DashboardService {
         if (ticket == null) {
             return RoomCurrentVO.builder().roomId(roomId).status("IDLE").build();
         }
+        PatientInfo patient = ticket.getPatientId() == null ? null : patientInfoMapper.selectById(ticket.getPatientId());
         return RoomCurrentVO.builder()
                 .roomId(roomId)
                 .ticketNo(ticket.getTicketNo())
                 .status(ticket.getStatus())
                 .patientId(ticket.getPatientId())
+                .patientName(patient == null ? null : patient.getPatientName())
                 .triageLevel(ticket.getTriageLevel())
                 .priorityScore(ticket.getPriorityScore())
                 .build();

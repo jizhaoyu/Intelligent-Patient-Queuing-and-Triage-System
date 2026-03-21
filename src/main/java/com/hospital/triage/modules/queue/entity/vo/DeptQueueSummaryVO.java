@@ -11,5 +11,6 @@ public class DeptQueueSummaryVO {
 
     private Long deptId;
     private Long waitingCount;
+    private List<QueueTicketVO> callingTickets;
     private List<QueueTicketVO> waitingTickets;
 }

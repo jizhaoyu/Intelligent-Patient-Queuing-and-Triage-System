@@ -10,6 +10,10 @@ logs/
 /.playwright-mcp/
 /output/
 /.jshell-prefs/
+/.omc/
+/web/.omc/
+/web/.claude/
+/src/main/resources/application-ai.yml
 /package-lock.json
 /web/node_modules/
 /web/dist/

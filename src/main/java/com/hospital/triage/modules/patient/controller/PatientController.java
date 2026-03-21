@@ -35,7 +35,7 @@ public class PatientController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('patient:manage')")
+    @PreAuthorize("hasAuthority('patient:manage') or hasAuthority('queue:call')")
     public Result<PatientVO> getById(@PathVariable Long id) {
         return Result.success(patientService.getById(id));
     }

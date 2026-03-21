@@ -13,4 +13,5 @@ public class DeptDashboardSummaryVO {
     private Long completedCount;
     private Long averageWaitMinutes;
     private Long timeoutHighPriorityCount;
+    private Long unqueuedTriagedCount;
 }
