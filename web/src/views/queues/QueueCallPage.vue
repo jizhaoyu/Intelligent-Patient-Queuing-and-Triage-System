@@ -96,8 +96,11 @@
                 {{ formatTicketQueueStatus(focusTicket, '待叫号') }}
               </span>
               <span class="data-pill">分诊 {{ formatTriageLevel(focusTicket?.triageLevel) }}</span>
-              <span class="data-pill">前方 {{ focusTicket?.waitingCount ?? '-' }} 人</span>
-              <span class="data-pill">已等待 {{ formatMinutes(focusTicket?.waitedMinutes) }}</span>
+              <span v-if="isWaitingQueueTicket(focusTicket)" class="data-pill">前方 {{ focusTicket?.waitingCount ?? '-' }} 人</span>
+              <span v-if="isWaitingQueueTicket(focusTicket)" class="data-pill">已等待 {{ formatMinutes(focusTicket?.waitedMinutes) }}</span>
+              <span v-else-if="focusTicket?.status === 'CALLING'" class="data-pill">叫号时间 {{ formatDateTime(focusTicket?.callTime) || '-' }}</span>
+              <span v-else-if="focusTicket?.status === 'MISSED'" class="data-pill">复呼 {{ focusTicket?.recallCount ?? 0 }} 次</span>
+              <span v-if="focusPatient?.priorityRevisitPending" class="data-pill data-pill--warning">下次复诊优先待使用</span>
             </div>
             <div class="focus-card__complaint">
               <span>主诉 / 主要不适</span>
@@ -106,12 +109,12 @@
             <p class="focus-card__desc">
               {{
                 focusTicket
-                  ? `当前排位 ${focusTicket.rank ?? '-'}，请先核对患者身份，再执行叫号或完成接诊。`
+                  ? buildFocusDescription(focusTicket)
                   : '点击“叫下一位”后，系统会在这里显示当前诊室的接诊焦点。'
               }}
             </p>
             <div class="focus-card__actions">
-              <el-button type="primary" size="large" :disabled="!roomId" :loading="calling" @click="handleCallNext">
+              <el-button type="primary" size="large" :disabled="!canCallNext" :loading="calling" @click="handleCallNext">
                 叫下一位
               </el-button>
               <el-button size="large" :disabled="!canRecall" :loading="recalling" @click="handleRecall">
@@ -123,7 +126,17 @@
               <el-button type="success" size="large" :disabled="!canComplete" :loading="completing" @click="handleComplete">
                 完成接诊
               </el-button>
+              <el-button
+                type="info"
+                size="large"
+                :disabled="!canGrantPriorityRevisit"
+                :loading="grantingPriorityRevisit"
+                @click="handleGrantPriorityRevisit"
+              >
+                设为下次优先复诊
+              </el-button>
             </div>
+            <p class="focus-card__hint">{{ priorityRevisitHint }}</p>
           </div>
 
           <div class="focus-card__aside">
@@ -155,13 +168,13 @@
               <div class="focus-metric-grid">
                 <article class="focus-metric-card">
                   <span>当前排位</span>
-                  <strong>{{ focusTicket?.rank ?? '-' }}</strong>
-                  <small>队列中的实时顺位</small>
+                  <strong>{{ formatRankValue(focusTicket) }}</strong>
+                  <small>{{ isWaitingQueueTicket(focusTicket) ? '队列中的实时顺位' : '叫号后不再参与排位' }}</small>
                 </article>
                 <article class="focus-metric-card">
                   <span>预计等待</span>
-                  <strong>{{ formatMinutes(focusTicket?.estimatedWaitMinutes) }}</strong>
-                  <small>供护士与患者沟通参考</small>
+                  <strong>{{ formatEstimatedWaitValue(focusTicket) }}</strong>
+                  <small>{{ isWaitingQueueTicket(focusTicket) ? '供护士与患者沟通参考' : '当前已进入叫号处理阶段' }}</small>
                 </article>
                 <article class="focus-metric-card">
                   <span>复呼次数</span>
@@ -290,9 +303,9 @@
             <el-descriptions-item label="患者">{{ selectedTicket.patientName || selectedTicket.patientNo || '-' }}</el-descriptions-item>
             <el-descriptions-item label="当前状态">{{ formatTicketQueueStatus(selectedTicket) }}</el-descriptions-item>
             <el-descriptions-item label="排位 / 前方人数">
-              {{ selectedTicket.rank ?? '-' }} / {{ selectedTicket.waitingCount ?? '-' }}
+              {{ formatRankValue(selectedTicket) }} / {{ formatWaitingCountValue(selectedTicket) }}
             </el-descriptions-item>
-            <el-descriptions-item label="预计等待">{{ formatMinutes(selectedTicket.estimatedWaitMinutes) }}</el-descriptions-item>
+            <el-descriptions-item label="预计等待">{{ formatEstimatedWaitValue(selectedTicket) }}</el-descriptions-item>
             <el-descriptions-item label="诊室 / 医生">
               {{ formatRoomDoctor(selectedTicket.roomName, selectedTicket.doctorName, selectedTicket.roomId) }}
             </el-descriptions-item>
@@ -322,6 +335,8 @@
             <el-descriptions-item label="联系电话">{{ focusPatient.phone || '-' }}</el-descriptions-item>
             <el-descriptions-item label="过敏史">{{ focusPatient.allergyHistory || '-' }}</el-descriptions-item>
             <el-descriptions-item label="特殊标签">{{ focusPatient.specialTags || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="优先复诊权限">{{ priorityRevisitStatusLabel }}</el-descriptions-item>
+            <el-descriptions-item label="授予信息">{{ priorityRevisitGrantMeta }}</el-descriptions-item>
             <el-descriptions-item label="当前就诊号">{{ focusPatient.currentVisitNo || '-' }}</el-descriptions-item>
           </el-descriptions>
           <el-empty v-else description="当前未加载患者详情" />
@@ -376,6 +391,7 @@ import {
   callNext,
   completeTicket,
   getActiveTickets,
+  grantPriorityRevisit,
   getTicket,
   getWaitingSummary,
   markMissed,
@@ -406,6 +422,7 @@ const calling = ref(false)
 const recalling = ref(false)
 const markingMissed = ref(false)
 const completing = ref(false)
+const grantingPriorityRevisit = ref(false)
 
 const deptId = computed(() => authStore.profile?.deptId ?? null)
 const roomId = computed(() => authStore.profile?.roomId ?? null)
@@ -447,9 +464,30 @@ const focusStrategyHint = computed(() => {
   }
   return focusTicket.value.priorityReason || focusTicket.value.aiAdvice || focusTicket.value.aiPriorityAdvice || '当前按常规队列策略处理。'
 })
+const canCallNext = computed(() => Boolean(roomId.value) && currentTicket.value?.status !== 'CALLING')
 const canRecall = computed(() => ['CALLING', 'MISSED'].includes(focusTicket.value?.status || ''))
 const canMarkMissed = computed(() => focusTicket.value?.status === 'CALLING')
 const canComplete = computed(() => focusTicket.value?.status === 'CALLING')
+const canGrantPriorityRevisit = computed(() => Boolean(focusTicket.value) && !focusPatient.value?.priorityRevisitPending)
+const priorityRevisitStatusLabel = computed(() =>
+  focusPatient.value?.priorityRevisitPending ? '已授予，等待下次取号使用' : '未授予'
+)
+const priorityRevisitGrantMeta = computed(() => {
+  if (!focusPatient.value?.priorityRevisitPending) {
+    return '-'
+  }
+  const parts = [focusPatient.value.priorityRevisitGrantedBy, formatDateTime(focusPatient.value.priorityRevisitGrantedTime)].filter(Boolean)
+  return parts.length ? parts.join(' / ') : '已授予'
+})
+const priorityRevisitHint = computed(() => {
+  if (!focusTicket.value) {
+    return '当前没有可设置优先复诊的患者。'
+  }
+  if (focusPatient.value?.priorityRevisitPending) {
+    return '该患者已拥有一次下次复诊优先权限，待其下次取号后自动使用并立即失效。'
+  }
+  return '医生可为当前患者登记一次下次复诊优先权限；该权限只生效一次，且不会挤到 1 级患者前面。'
+})
 
 const filteredTickets = computed(() => {
   const normalized = keyword.value.trim().toLowerCase()
@@ -585,6 +623,10 @@ async function handleCallNext() {
     ElMessage.warning('当前账号未绑定诊室，无法执行叫号')
     return
   }
+  if (currentTicket.value?.status === 'CALLING') {
+    ElMessage.warning('当前已有叫号中的患者，请先完成当前接诊流转')
+    return
+  }
 
   calling.value = true
   try {
@@ -653,6 +695,25 @@ async function handleComplete() {
   }
 }
 
+async function handleGrantPriorityRevisit() {
+  if (!focusTicket.value) {
+    return
+  }
+
+  const ticketNo = focusTicket.value.ticketNo
+  grantingPriorityRevisit.value = true
+  try {
+    await grantPriorityRevisit(ticketNo)
+    appendOperation('设置下次优先复诊', focusTicket.value)
+    ElMessage.success('已授予一次下次复诊优先权限，使用后自动失效')
+    await loadWorkbench(ticketNo)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '设置优先复诊失败')
+  } finally {
+    grantingPriorityRevisit.value = false
+  }
+}
+
 function formatQueueStatus(status?: string, fallback = '-') {
   const map: Record<string, string> = {
     WAITING: '候诊中',
@@ -694,6 +755,11 @@ function formatTicketQueueStatus(ticket?: QueueTicket | null, fallback = '-') {
   return formatDisplayQueueStatus(ticket, fallback)
 }
 
+function isWaitingQueueTicket(ticket?: QueueTicket | null) {
+  const displayStatus = getQueueDisplayStatus(ticket)
+  return displayStatus === 'WAITING_FOR_CONSULTATION' || displayStatus === 'QUEUEING'
+}
+
 function queueStatusTypeByTicket(ticket?: QueueTicket | null): 'success' | 'warning' | 'info' | 'danger' {
   return getQueueStatusTagType(ticket)
 }
@@ -717,11 +783,54 @@ function formatTriageLevel(level?: number) {
   return level ? `${level} 级` : '-'
 }
 
+function formatRankValue(ticket?: QueueTicket | null) {
+  if (!isWaitingQueueTicket(ticket)) {
+    return '-'
+  }
+  return ticket?.rank && ticket.rank > 0 ? `#${ticket.rank}` : '-'
+}
+
+function formatWaitingCountValue(ticket?: QueueTicket | null) {
+  if (!isWaitingQueueTicket(ticket)) {
+    return '-'
+  }
+  return typeof ticket?.waitingCount === 'number' ? `${ticket.waitingCount}` : '-'
+}
+
+function formatEstimatedWaitValue(ticket?: QueueTicket | null) {
+  if (!isWaitingQueueTicket(ticket)) {
+    return '-'
+  }
+  return formatMinutes(ticket?.estimatedWaitMinutes)
+}
+
+function buildFocusDescription(ticket: QueueTicket) {
+  const displayStatus = getQueueDisplayStatus(ticket)
+  if (displayStatus === 'CALLING') {
+    return '当前患者已进入叫号处理阶段，请先核对患者身份，再执行复呼、过号或完成接诊。'
+  }
+  if (displayStatus === 'MISSED') {
+    return '当前患者已过号，如患者回到诊室，可直接执行复呼继续接诊。'
+  }
+  return `当前排位 ${formatRankValue(ticket)}，请先核对患者身份，再执行叫号或完成接诊。`
+}
+
 function formatMinutes(value?: number) {
   if (typeof value !== 'number' || value < 0) {
     return '-'
   }
   return `${value} 分钟`
+}
+
+function formatDateTime(value?: string) {
+  if (!value) {
+    return ''
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString()
 }
 
 function formatRoomLabel(targetRoomId?: number | null) {
@@ -805,11 +914,15 @@ onMounted(() => {
 }
 
 .control-card {
-  border: 1px solid rgba(8, 145, 178, 0.14);
+  border: 1px solid rgba(8, 145, 178, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 253, 254, 0.94));
 }
 
 .toolbar-foot {
   margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(8, 145, 178, 0.08);
 }
 
 .summary-grid {
@@ -819,22 +932,29 @@ onMounted(() => {
 }
 
 .summary-card {
-  padding: 16px 18px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(236, 254, 255, 0.9) 0%, rgba(255, 255, 255, 1) 100%);
-  border: 1px solid rgba(34, 211, 238, 0.22);
+  position: relative;
+  overflow: hidden;
+  padding: 18px 18px 20px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.14), transparent 7rem),
+    linear-gradient(180deg, rgba(236, 254, 255, 0.9) 0%, rgba(255, 255, 255, 1) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  box-shadow: 0 16px 32px rgba(8, 47, 73, 0.06);
 }
 
 .summary-card strong {
   display: block;
   margin: 10px 0 6px;
   color: #164e63;
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.2;
 }
 
 .summary-card--accent {
-  background: linear-gradient(180deg, rgba(8, 145, 178, 0.12) 0%, rgba(236, 254, 255, 0.95) 100%);
+  background:
+    radial-gradient(circle at top right, rgba(5, 150, 105, 0.12), transparent 6rem),
+    linear-gradient(180deg, rgba(8, 145, 178, 0.12) 0%, rgba(236, 254, 255, 0.95) 100%);
   border-color: rgba(8, 145, 178, 0.22);
 }
 
@@ -859,6 +979,7 @@ onMounted(() => {
 
 .focus-card__main {
   gap: 14px;
+  padding: 6px 2px 2px;
 }
 
 .focus-card__aside {
@@ -866,17 +987,21 @@ onMounted(() => {
 }
 
 .focus-panel {
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(248, 250, 252, 0.92);
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(8, 145, 178, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 253, 254, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .focus-panel__header {
   margin-bottom: 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #0c4a6e;
 }
 
 .focus-kv-grid,
@@ -888,10 +1013,10 @@ onMounted(() => {
 
 .focus-kv-item,
 .focus-metric-card {
-  padding: 12px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 13px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .focus-kv-item span,
@@ -930,10 +1055,10 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding: 12px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 13px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .focus-checklist__item.is-active {
@@ -968,7 +1093,8 @@ onMounted(() => {
 
 .focus-card__ticket {
   margin-top: 8px;
-  font-size: 32px;
+  font-family: var(--font-mono);
+  font-size: 34px;
   line-height: 1.1;
   font-weight: 700;
 }
@@ -981,14 +1107,14 @@ onMounted(() => {
 
 .focus-card__name {
   margin-top: 8px;
-  font-size: 26px;
+  font-size: 30px;
   line-height: 1.2;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .focus-card__complaint {
-  padding: 14px 16px;
-  border-radius: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
   background: linear-gradient(180deg, rgba(240, 253, 250, 0.92), rgba(255, 255, 255, 0.98));
   border: 1px solid rgba(20, 184, 166, 0.14);
 }
@@ -1026,6 +1152,17 @@ onMounted(() => {
   color: #0f172a;
 }
 
+.data-pill--warning {
+  background: rgba(251, 146, 60, 0.14);
+  color: #c2410c;
+}
+
+.focus-card__hint {
+  margin: 0;
+  color: var(--muted-color);
+  line-height: 1.6;
+}
+
 .status-pill--success,
 .status-pill--success.status-dot {
   background: #16a34a;
@@ -1059,10 +1196,10 @@ onMounted(() => {
 .preview-stats article,
 .preview-item,
 .operation-item {
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 13px 14px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .preview-stats strong,
@@ -1116,6 +1253,7 @@ onMounted(() => {
 .strategy-item strong {
   font-size: 15px;
   color: #0f172a;
+  line-height: 1.6;
 }
 
 .strategy-tags {

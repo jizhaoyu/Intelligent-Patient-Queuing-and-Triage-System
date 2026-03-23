@@ -7,19 +7,20 @@
 - 主 happy path 已打通：`到诊 -> 分诊评估 -> 自动入队 -> 诊室叫号`
 - 患者端正式能力是“院内自助机取号 + 排队查询”
 - 手工建票仅保留为“异常补录 / 管理员修复”
-- AI 已接入患者自助取号与护士分诊，但定位为“辅助建议层”，不可用时会回退到规则结果，不阻断主链路
+- AI 已接入患者自助取号与人工分诊，但定位为“辅助建议层”，不可用时会回退到规则结果，不阻断主链路
+- 已修正工作台叫号页的状态展示逻辑：`CALLING` 患者不再错误显示等待排位/预计等待，且有在诊患者时不能重复“叫下一位”
 
 ## 当前入口
 
 ### 后台端
 
 - 地址：`http://localhost:5173/login`
-- 职责：治理、审计、异常修复、规则维护
+- 职责：患者档案、就诊建档、队列治理、异常修复、规则维护
 
 ### 工作台
 
 - 地址：`http://localhost:5174/login`
-- 职责：建档、到诊、分诊、叫号
+- 职责：分诊评估、诊室叫号
 
 ### 屏显端
 
@@ -193,8 +194,6 @@ AI_ENABLED=false
 ## 默认演示账号
 
 - 管理员：`admin`
-- 分诊护士：`triage.nurse`
-- 导诊台：`guide.desk`
 - 诊室医生：`doctor.zhang`
 
 默认密码：
@@ -204,25 +203,34 @@ AI_ENABLED=false
 推荐首页：
 
 - `admin` -> `/admin/dashboard`
-- `triage.nurse` -> `/workstation/triage/assessments/new`
-- `guide.desk` -> `/workstation/visits/new`
 - `doctor.zhang` -> `/workstation/queue-call`
+
+管理员侧常用入口：
+
+- `/admin/patients`
+- `/admin/visits/new`
+- `/admin/triage/assessments/new`
+- `/admin/queues`
+- `/admin/queues/exceptions`
+- `/admin/queues/events`
+- `/admin/triage/rules`
 
 ## 典型业务流程
 
 ### 工作台主链路
 
-1. 导诊台建档 / 挂号后到诊
-2. 分诊护士完成评估，系统生成规则结果与 AI 建议
+1. 管理员在后台完成患者建档、就诊登记与到诊
+2. 管理端或工作台完成分诊评估，系统生成规则结果与 AI 建议
 3. 系统自动生成或刷新 `WAITING` 票据
 4. 诊室医生在 `/workstation/queue-call` 叫号、复呼、过号、完成接诊
 
 ### 患者端主链路
 
-1. 既有患者在院内自助机输入 `patientNo + 手机号后 4 位`
+1. 既有患者在院内自助机输入 `patientNo` 或 `patientName`，并配合手机号后 4 位完成校验
 2. 若已有有效排队，直接返回当前排队结果
-3. 若无有效就诊，系统创建本次 visit、自动到诊、生成 AI 预分诊建议并自动入队
-4. 患者可通过查询页查看 `WAITING`、`CALLING`、`MISSED`、`COMPLETED`、`CANCELLED` 等状态，以及当前 AI 建议信息
+3. 若为新患者，可在自助机页直接补录基础档案后继续取号
+4. 若无有效就诊，系统创建本次 visit、自动到诊、生成 AI 预分诊建议并自动入队
+5. 患者可通过 `/patient/queue` 查询 `WAITING`、`CALLING`、`MISSED`、`COMPLETED`、`CANCELLED` 等状态，以及当前 AI 建议信息
 
 ## 测试与校验
 
