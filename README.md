@@ -247,10 +247,10 @@ npm --prefix web run build
 ## 相关文档
 
 - [docs/API接口说明.md](docs/API接口说明.md)
-- [docs/AI智能排队分诊规划方案.md](docs/AI智能排队分诊规划方案.md)
+
 - [docs/AI智能排队分诊实施清单.md](docs/AI智能排队分诊实施清单.md)
 - [docs/单机上线部署清单.md](docs/单机上线部署清单.md)
-- [docs/项目面试5分钟演示稿.md](docs/项目面试5分钟演示稿.md)
+
 
 在线接口文档：
 
