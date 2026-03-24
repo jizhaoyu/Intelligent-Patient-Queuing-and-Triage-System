@@ -199,6 +199,7 @@ const authStore = useAuthStore()
 const submitting = ref(false)
 const reassessing = ref(false)
 const assessment = ref<TriageAssessment | null>(null)
+const surfaceBasePath = computed(() => (route.path.startsWith('/admin') ? '/admin' : '/workstation'))
 const form = reactive({
   visitId: (route.query.visitId as string) || '',
   symptomTags: '',
@@ -351,7 +352,7 @@ async function handleSubmit() {
   try {
     assessment.value = await createAssessment(buildPayload())
     ElMessage.success(assessment.value.queueCreated ? '评估提交成功，已自动入队' : '评估提交成功，但自动入队未完成')
-    await router.push(`/workstation/triage/assessments/${assessment.value.id}`)
+    await router.push(`${surfaceBasePath.value}/triage/assessments/${assessment.value.id}`)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '提交评估失败')
   } finally {
@@ -368,7 +369,7 @@ async function handleReassess() {
   try {
     assessment.value = await reassess(assessment.value.id, buildPayload())
     ElMessage.success(assessment.value.queueCreated ? '重新评估成功，排队信息已同步' : '重新评估成功，但自动入队未完成')
-    await router.push(`/workstation/triage/assessments/${assessment.value.id}`)
+    await router.push(`${surfaceBasePath.value}/triage/assessments/${assessment.value.id}`)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '重新评估失败')
   } finally {
@@ -383,11 +384,72 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.triage-workspace {
+  gap: 20px;
+}
+
+.triage-workspace :deep(.el-card) {
+  border: none;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 22px 48px rgba(6, 95, 70, 0.08);
+}
+
+.triage-workspace :deep(.el-card__header) {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(247, 253, 250, 0.98), rgba(255, 255, 255, 0.82));
+}
+
+.triage-workspace :deep(.el-card__body) {
+  padding: 22px;
+}
+
+.triage-workspace :deep(.el-form-item__label) {
+  font-weight: 700;
+  color: var(--title-color);
+}
+
+.triage-workspace :deep(.el-input__wrapper),
+.triage-workspace :deep(.el-select__wrapper),
+.triage-workspace :deep(.el-textarea__inner) {
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.18);
+}
+
+.triage-workspace :deep(.el-input__wrapper),
+.triage-workspace :deep(.el-select__wrapper) {
+  min-height: 48px;
+}
+
+.triage-workspace :deep(.el-input__wrapper.is-focus),
+.triage-workspace :deep(.el-select__wrapper.is-focused),
+.triage-workspace :deep(.el-textarea__inner:focus) {
+  box-shadow:
+    0 0 0 4px rgba(16, 185, 129, 0.12),
+    inset 0 0 0 1px rgba(5, 150, 105, 0.32);
+}
+
+.triage-workspace :deep(.el-checkbox) {
+  min-height: 44px;
+  color: var(--text-color);
+  font-weight: 600;
+}
+
+.triage-workspace :deep(.el-input-number) {
+  width: 100%;
+}
+
+.triage-result-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 250, 0.96));
+}
+
 .triage-ai-card {
-  border-radius: 22px;
+  border-radius: 28px;
   border: 1px solid rgba(15, 118, 110, 0.12);
   background: linear-gradient(180deg, #f7fdfb, #ffffff);
-  box-shadow: 0 14px 30px rgba(15, 118, 110, 0.08);
+  box-shadow: 0 18px 38px rgba(15, 118, 110, 0.08);
 }
 
 .triage-ai-card__header {
@@ -399,8 +461,8 @@ onMounted(() => {
 
 .triage-ai-card__confidence {
   font-size: 12px;
-  color: #0f172a;
-  padding: 4px 10px;
+  color: var(--title-color);
+  padding: 6px 10px;
   border-radius: 999px;
   background: rgba(15, 118, 110, 0.08);
 }
@@ -413,10 +475,22 @@ onMounted(() => {
 }
 
 .triage-ai-grid__item {
-  padding: 14px 16px;
-  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  padding: 16px 18px;
+  border-radius: 18px;
   background: #ffffff;
   border: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.triage-ai-grid__item::after {
+  content: "";
+  position: absolute;
+  inset: auto -20px -24px auto;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.12), transparent 72%);
 }
 
 .triage-ai-grid__item span {
@@ -431,7 +505,7 @@ onMounted(() => {
   margin-top: 6px;
   display: block;
   font-size: 16px;
-  color: #0f172a;
+  color: var(--title-color);
 }
 
 .triage-ai-grid__diff {
@@ -440,14 +514,34 @@ onMounted(() => {
 
 .triage-ai-card__tag {
   display: inline-flex;
-  margin-top: 4px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.12);
   font-size: 12px;
   color: #f97316;
 }
 
 .triage-ai-card__advice {
-  margin-top: 12px;
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(240, 253, 250, 0.78);
   font-size: 14px;
+  line-height: 1.7;
   color: #1e293b;
+}
+
+@media (max-width: 760px) {
+  .triage-workspace :deep(.el-card__body),
+  .triage-workspace :deep(.el-card__header) {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .triage-ai-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

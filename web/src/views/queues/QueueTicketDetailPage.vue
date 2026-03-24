@@ -3,7 +3,14 @@
     <PageHeader
       title="排队详情"
       description="查看票号、诊室流转、来源审计与当前排位信息"
-    />
+    >
+      <template #actions>
+        <el-button @click="goBack">返回候诊队列</el-button>
+        <el-button type="danger" :disabled="!canCancel" :loading="cancelling" @click="handleCancelTicket">
+          取消排队
+        </el-button>
+      </template>
+    </PageHeader>
 
     <el-skeleton :loading="loading" animated>
       <template #default>
@@ -140,20 +147,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getQueueEvents, getRank, getTicket } from '@/api/queue'
+import { cancelTicket, getQueueEvents, getRank, getTicket } from '@/api/queue'
 import type { QueueEventLog, QueueRank, QueueTicket } from '@/types/queue'
 import { formatQueueStatus, formatQueueStatusCode, getQueueStatusTagType } from '@/utils/queueStatus'
 
 const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
+const cancelling = ref(false)
 const ticket = ref<QueueTicket | null>(null)
 const rank = ref<QueueRank | null>(null)
 const events = ref<QueueEventLog[]>([])
 let requestId = 0
+const canCancel = computed(() => {
+  const status = ticket.value?.status
+  return !!ticket.value?.ticketNo && status !== 'COMPLETED' && status !== 'CANCELLED'
+})
 
 async function loadTicketDetail(ticketNo: string) {
   const currentRequestId = ++requestId
@@ -205,6 +218,27 @@ watch(
   },
   { immediate: true }
 )
+
+function goBack() {
+  void router.push('/admin/queues')
+}
+
+async function handleCancelTicket() {
+  if (!ticket.value?.ticketNo || !canCancel.value) {
+    return
+  }
+
+  cancelling.value = true
+  try {
+    await cancelTicket(ticket.value.ticketNo)
+    ElMessage.success('已取消当前排队')
+    await loadTicketDetail(ticket.value.ticketNo)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '取消排队失败')
+  } finally {
+    cancelling.value = false
+  }
+}
 
 function formatStatus(status?: string) {
   const map: Record<string, string> = {
@@ -316,9 +350,60 @@ function statusTypeByTicket(ticket?: QueueTicket | null): 'success' | 'warning' 
 
 <style scoped>
 .queue-ticket-detail-page {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 20px;
+}
+
+.queue-ticket-detail-page :deep(.el-card) {
+  border: none;
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 22px 48px rgba(8, 47, 73, 0.08);
+}
+
+.queue-ticket-detail-page :deep(.el-card__header) {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(255, 255, 255, 0.82));
+}
+
+.queue-ticket-detail-page :deep(.el-card__body) {
+  padding: 22px;
+}
+
+.queue-ticket-detail-page :deep(.el-descriptions__body .el-descriptions__table) {
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.queue-ticket-detail-page :deep(.el-descriptions__label.el-descriptions__cell) {
+  min-width: 118px;
+  background: rgba(240, 249, 255, 0.88);
+  color: var(--muted-color);
+  font-weight: 700;
+}
+
+.queue-ticket-detail-page :deep(.el-descriptions__content.el-descriptions__cell) {
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-color);
+}
+
+.queue-ticket-detail-page :deep(.el-table) {
+  border-radius: 22px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.queue-ticket-detail-page :deep(.el-table th.el-table__cell) {
+  background: rgba(240, 249, 255, 0.9);
+  color: var(--muted-color);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.queue-ticket-detail-page :deep(.el-table__row:hover > td.el-table__cell) {
+  background: rgba(34, 211, 238, 0.06);
 }
 
 .summary-grid {
@@ -328,8 +413,10 @@ function statusTypeByTicket(ticket?: QueueTicket | null): 'success' | 'warning' 
 }
 
 .summary-card {
+  position: relative;
+  overflow: hidden;
   border: none;
-  border-radius: 20px;
+  border-radius: 22px;
 }
 
 .summary-card :deep(.el-card__body) {
@@ -338,19 +425,29 @@ function statusTypeByTicket(ticket?: QueueTicket | null): 'success' | 'warning' 
   gap: 10px;
 }
 
+.summary-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -24px -28px auto;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.14), transparent 72%);
+}
+
 .summary-card span,
 .summary-card small {
-  color: #64748b;
+  color: var(--muted-color);
 }
 
 .summary-card strong {
-  font-size: 24px;
-  line-height: 1.2;
-  color: #0f172a;
+  font-size: 30px;
+  line-height: 1.08;
+  color: var(--title-color);
 }
 
 .summary-card--accent {
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(14, 165, 233, 0.1));
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(14, 165, 233, 0.14));
 }
 
 .detail-grid {
@@ -372,6 +469,14 @@ function statusTypeByTicket(ticket?: QueueTicket | null): 'success' | 'warning' 
 @media (max-width: 680px) {
   .summary-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .queue-ticket-detail-page :deep(.el-card__body),
+  .queue-ticket-detail-page :deep(.el-card__header) {
+    padding-left: 18px;
+    padding-right: 18px;
   }
 }
 </style>

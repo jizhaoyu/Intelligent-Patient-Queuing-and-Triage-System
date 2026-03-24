@@ -1,4 +1,5 @@
 import http from './http'
+import type { Patient } from '@/types/patient'
 import type {
   DeptQueueSummary,
   QueueEventLog,
@@ -55,6 +56,10 @@ export function completeTicket(ticketNo: string) {
 
 export function cancelTicket(ticketNo: string) {
   return http.post<any, QueueTicket>(`/queues/tickets/${ticketNo}/cancel`)
+}
+
+export function grantPriorityRevisit(ticketNo: string) {
+  return http.post<any, Patient>(`/queues/tickets/${ticketNo}/grant-priority-revisit`)
 }
 
 export function getRank(ticketNo: string) {

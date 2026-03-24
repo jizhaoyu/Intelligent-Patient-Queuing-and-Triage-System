@@ -8,6 +8,9 @@ export interface Patient {
   idCard?: string
   allergyHistory?: string
   specialTags?: string
+  priorityRevisitPending?: boolean
+  priorityRevisitGrantedTime?: string
+  priorityRevisitGrantedBy?: string
   currentVisitId?: number
   currentVisitNo?: string
   currentStatus?: string

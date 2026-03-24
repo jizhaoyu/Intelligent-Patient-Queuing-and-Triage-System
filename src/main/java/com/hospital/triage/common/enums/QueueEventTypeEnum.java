@@ -7,5 +7,6 @@ public enum QueueEventTypeEnum {
     MISSED,
     COMPLETE,
     CANCEL,
-    MANUAL_ADJUST
+    MANUAL_ADJUST,
+    GRANT_PRIORITY_REVISIT
 }

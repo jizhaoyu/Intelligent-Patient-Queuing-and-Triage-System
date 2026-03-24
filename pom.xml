@@ -22,6 +22,7 @@
         <lombok.version>1.18.44</lombok.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <knife4j.version>4.5.0</knife4j.version>
+        <springdoc.version>2.3.0</springdoc.version>
         <jjwt.version>0.12.6</jjwt.version>
         <hutool.version>5.8.37</hutool.version>
     </properties>
@@ -65,7 +66,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.6.0</version>
+            <version>${springdoc.version}</version>
         </dependency>
         <dependency>
             <groupId>com.github.xiaoymin</groupId>

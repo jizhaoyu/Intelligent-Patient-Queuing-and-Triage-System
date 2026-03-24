@@ -38,6 +38,8 @@ export interface QueueTicket {
   sourceType?: string
   sourceRemark?: string
   lastAdjustReason?: string
+  consultationLocked?: boolean
+  roomAssignmentStatus?: 'ASSIGNED' | 'UNASSIGNED_OVERFLOW'
   waitingCount?: number
   rank?: number
   estimatedWaitMinutes?: number

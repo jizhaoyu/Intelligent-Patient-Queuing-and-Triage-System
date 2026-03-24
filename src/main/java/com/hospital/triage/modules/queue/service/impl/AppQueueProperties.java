@@ -25,6 +25,8 @@ public class AppQueueProperties {
     private Integer agingExplainThresholdMinutes = 15;
     private Integer surgeEligibleLevelThreshold = 2;
     private Integer kioskSevereLevelThreshold = 2;
+    private Integer roomDiversionHighLevelThreshold = 2;
+    private Integer emergencyPriorityRoomHighLevelThreshold = 2;
     private Integer kioskPriorityRoomBonus = 180;
     private Integer kioskPriorityRoomReservePenalty = 120;
     private Integer kioskWaitingWeight = 100;

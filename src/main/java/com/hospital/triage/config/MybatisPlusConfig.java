@@ -47,8 +47,20 @@ public class MybatisPlusConfig {
             ensureColumnExists(jdbcTemplate, "queue_ticket", "source_type", "ALTER TABLE queue_ticket ADD COLUMN source_type VARCHAR(32) NULL AFTER fast_track");
             ensureColumnExists(jdbcTemplate, "queue_ticket", "source_remark", "ALTER TABLE queue_ticket ADD COLUMN source_remark VARCHAR(255) NULL AFTER source_type");
             ensureColumnExists(jdbcTemplate, "queue_ticket", "last_adjust_reason", "ALTER TABLE queue_ticket ADD COLUMN last_adjust_reason VARCHAR(255) NULL AFTER source_remark");
+            ensureColumnExists(jdbcTemplate, "queue_ticket", "consultation_locked",
+                    "ALTER TABLE queue_ticket ADD COLUMN consultation_locked TINYINT NOT NULL DEFAULT 0 AFTER last_adjust_reason");
+            ensureColumnExists(jdbcTemplate, "queue_ticket", "consultation_locked_time",
+                    "ALTER TABLE queue_ticket ADD COLUMN consultation_locked_time DATETIME NULL AFTER consultation_locked");
+            ensureColumnExists(jdbcTemplate, "queue_ticket", "room_assignment_status",
+                    "ALTER TABLE queue_ticket ADD COLUMN room_assignment_status VARCHAR(32) NOT NULL DEFAULT 'ASSIGNED' AFTER consultation_locked_time");
             ensureColumnExists(jdbcTemplate, "queue_event_log", "source_type", "ALTER TABLE queue_event_log ADD COLUMN source_type VARCHAR(32) NULL AFTER operator_name");
             ensureColumnExists(jdbcTemplate, "queue_event_log", "source_remark", "ALTER TABLE queue_event_log ADD COLUMN source_remark VARCHAR(255) NULL AFTER source_type");
+            ensureColumnExists(jdbcTemplate, "patient_info", "priority_revisit_pending",
+                    "ALTER TABLE patient_info ADD COLUMN priority_revisit_pending TINYINT NOT NULL DEFAULT 0 AFTER special_tags");
+            ensureColumnExists(jdbcTemplate, "patient_info", "priority_revisit_granted_time",
+                    "ALTER TABLE patient_info ADD COLUMN priority_revisit_granted_time DATETIME NULL AFTER priority_revisit_pending");
+            ensureColumnExists(jdbcTemplate, "patient_info", "priority_revisit_granted_by",
+                    "ALTER TABLE patient_info ADD COLUMN priority_revisit_granted_by VARCHAR(64) NULL AFTER priority_revisit_granted_time");
 
             ensureColumnExists(jdbcTemplate, "triage_assessment", "ai_suggested_level",
                     "ALTER TABLE triage_assessment ADD COLUMN ai_suggested_level INT NULL AFTER manual_adjust_score");

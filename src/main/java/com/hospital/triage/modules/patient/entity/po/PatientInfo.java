@@ -21,6 +21,9 @@ public class PatientInfo extends BaseEntity {
     private String idCard;
     private String allergyHistory;
     private String specialTags;
+    private Boolean priorityRevisitPending;
+    private LocalDateTime priorityRevisitGrantedTime;
+    private String priorityRevisitGrantedBy;
     private String currentStatus;
     private Long currentVisitId;
     private String currentVisitNo;

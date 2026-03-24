@@ -1,5 +1,6 @@
 package com.hospital.triage.modules.queue.service;
 
+import com.hospital.triage.modules.patient.entity.vo.PatientVO;
 import com.hospital.triage.modules.queue.entity.dto.QueueTicketCreateDTO;
 import com.hospital.triage.modules.queue.entity.vo.DeptQueueSummaryVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueRankVO;
@@ -32,6 +33,8 @@ public interface QueueDispatchService {
     QueueTicketVO complete(String ticketNo, String operatorName);
 
     QueueTicketVO cancel(String ticketNo, String operatorName);
+
+    PatientVO grantPriorityRevisit(String ticketNo, String operatorName);
 
     QueueRankVO rank(String ticketNo);
 

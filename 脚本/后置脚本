@@ -1,0 +1,86 @@
+const res = pm.response.json();
+
+function maskPatientName(name) {
+  if (!name) return '-';
+  const normalized = String(name).trim();
+  if (normalized.length <= 1) return normalized + '*';
+  if (normalized.length === 2) return normalized.charAt(0) + '*';
+  return normalized.charAt(0) + '*' + normalized.charAt(normalized.length - 1);
+}
+
+const rawName = pm.variables.get('patientName');
+const maskedName = maskPatientName(rawName);
+const expectedDeptId = Number(pm.variables.get('expectedDeptId') || pm.variables.get('deptId'));
+const expectedDeptKeyword = String(pm.variables.get('expectedDeptKeyword') || '').trim();
+const expectedRoomKeyword = String(pm.variables.get('expectedRoomKeyword') || expectedDeptKeyword).trim();
+const expectedTriageLevel = Number(pm.variables.get('expectedTriageLevel'));
+const expectedTriageBucket = String(pm.variables.get('expectedTriageBucket') || '').trim();
+const sampledRuleCode = pm.variables.get('sampleRuleCode');
+
+pm.test('HTTP 状态码为 200', function () {
+  pm.response.to.have.status(200);
+});
+
+pm.test('业务返回成功', function () {
+  pm.expect(res.success).to.eql(true);
+  pm.expect(String(res.code)).to.eql('200');
+});
+
+pm.test('返回了核心建档排队字段', function () {
+  pm.expect(res.data).to.exist;
+  pm.expect(res.data.patientNo).to.exist;
+  pm.expect(res.data.visitId).to.exist;
+  pm.expect(res.data.ticketNo).to.exist;
+  pm.expect(res.data.hasActiveQueue).to.eql(true);
+});
+
+pm.test('姓名返回正确', function () {
+  pm.expect([rawName, maskedName]).to.include(res.data.patientName);
+});
+
+pm.test('最终进入预期科室', function () {
+  pm.expect(Number(res.data.deptId)).to.eql(expectedDeptId);
+  if (expectedDeptKeyword) {
+    pm.expect(String(res.data.deptName || '')).to.include(expectedDeptKeyword);
+  }
+});
+
+pm.test('成人不会进入儿科', function () {
+  pm.expect(Number(res.data.deptId)).to.not.eql(2);
+  pm.expect(String(res.data.deptName || '')).to.not.include('儿科');
+});
+
+pm.test('分诊级别符合抽样规则', function () {
+  pm.expect(res.data.triageLevel).to.exist;
+  const actualLevel = Number(res.data.triageLevel);
+  pm.expect(actualLevel).to.eql(expectedTriageLevel);
+  if (expectedTriageBucket === 'LEVEL_1_2') {
+    pm.expect([1, 2]).to.include(actualLevel);
+  }
+  if (expectedTriageBucket === 'LEVEL_3_4') {
+    pm.expect([3, 4]).to.include(actualLevel);
+  }
+});
+
+pm.test('已分配对应科室诊室', function () {
+  pm.expect(res.data.roomId).to.exist;
+  if (expectedRoomKeyword) {
+    pm.expect(String(res.data.roomName || '')).to.include(expectedRoomKeyword);
+  }
+});
+
+console.log('本次建档结果:', {
+  sampledRuleCode,
+  requestName: rawName,
+  chiefComplaint: pm.variables.get('chiefComplaint'),
+  expectedDeptId,
+  expectedDeptKeyword,
+  expectedTriageLevel,
+  responseName: res.data.patientName,
+  triageLevel: res.data.triageLevel,
+  deptId: res.data.deptId,
+  deptName: res.data.deptName,
+  roomId: res.data.roomId,
+  roomName: res.data.roomName,
+  ticketNo: res.data.ticketNo
+});

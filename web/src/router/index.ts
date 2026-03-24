@@ -67,6 +67,132 @@ const adminChildren: RouteRecordRaw[] = [
       surface: 'admin',
       menuPath: '/admin/dashboard'
     }
+  },
+  {
+    path: 'patients',
+    name: 'admin-patient-list',
+    component: () => import('@/views/patients/AdminPatientListPage.vue'),
+    meta: {
+      title: '患者管理',
+      permission: 'patient:manage',
+      surface: 'admin',
+      menuPath: '/admin/patients'
+    }
+  },
+  {
+    path: 'patients/:id',
+    name: 'admin-patient-detail',
+    component: () => import('@/views/patients/AdminPatientDetailPage.vue'),
+    meta: {
+      title: '患者详情',
+      permission: 'patient:manage',
+      surface: 'admin',
+      hidden: true,
+      menuPath: '/admin/patients'
+    }
+  },
+  {
+    path: 'visits/new',
+    name: 'admin-visit-create',
+    component: () => import('@/views/visits/VisitCreatePage.vue'),
+    meta: {
+      title: '就诊建档',
+      permission: 'visit:manage',
+      surface: 'admin',
+      menuPath: '/admin/visits/new'
+    }
+  },
+  {
+    path: 'visits/:id',
+    name: 'admin-visit-detail',
+    component: () => import('@/views/visits/VisitDetailPage.vue'),
+    meta: {
+      title: '就诊详情',
+      permission: 'visit:manage',
+      surface: 'admin',
+      hidden: true,
+      menuPath: '/admin/visits/new'
+    }
+  },
+  {
+    path: 'triage/assessments/new',
+    name: 'admin-triage-assessment-create',
+    redirect: '/admin/visits/new',
+    meta: {
+      title: '分诊评估',
+      permission: 'triage:assess',
+      surface: 'admin',
+      hidden: true,
+      menuPath: '/admin/visits/new'
+    }
+  },
+  {
+    path: 'triage/assessments/:id',
+    name: 'admin-triage-assessment-detail',
+    redirect: '/admin/visits/new',
+    meta: {
+      title: '评估详情',
+      permission: 'triage:assess',
+      surface: 'admin',
+      hidden: true,
+      menuPath: '/admin/visits/new'
+    }
+  },
+  {
+    path: 'triage/rules',
+    name: 'admin-triage-rules',
+    component: () => import('@/views/triage/TriageRulePage.vue'),
+    meta: {
+      title: '分诊规则',
+      permission: 'triage:rule',
+      surface: 'admin',
+      menuPath: '/admin/triage/rules'
+    }
+  },
+  {
+    path: 'queues',
+    name: 'admin-queue-list',
+    component: () => import('@/views/queues/QueueListPage.vue'),
+    meta: {
+      title: '候诊队列',
+      permission: 'queue:manage',
+      surface: 'admin',
+      menuPath: '/admin/queues'
+    }
+  },
+  {
+    path: 'queues/tickets/:ticketNo',
+    name: 'admin-queue-ticket-detail',
+    component: () => import('@/views/queues/QueueTicketDetailPage.vue'),
+    meta: {
+      title: '排队详情',
+      permission: 'queue:manage',
+      surface: 'admin',
+      hidden: true,
+      menuPath: '/admin/queues'
+    }
+  },
+  {
+    path: 'queues/events',
+    name: 'admin-queue-events',
+    component: () => import('@/views/queues/QueueEventPage.vue'),
+    meta: {
+      title: '事件日志',
+      permission: 'queue:manage',
+      surface: 'admin',
+      menuPath: '/admin/queues/events'
+    }
+  },
+  {
+    path: 'queues/exceptions',
+    name: 'admin-queue-exceptions',
+    component: () => import('@/views/queues/QueueExceptionPage.vue'),
+    meta: {
+      title: '异常治理',
+      permission: 'queue:manage',
+      surface: 'admin',
+      menuPath: '/admin/queues/exceptions'
+    }
   }
 ]
 
@@ -138,7 +264,13 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/patient/queue',
-    redirect: '/patient/self-queue'
+    name: 'patient-queue',
+    component: () => import('@/views/patient/PatientQueuePage.vue'),
+    meta: {
+      public: true,
+      title: '排队查询',
+      surface: 'patient'
+    }
   },
   {
     path: '/patient/self-queue',

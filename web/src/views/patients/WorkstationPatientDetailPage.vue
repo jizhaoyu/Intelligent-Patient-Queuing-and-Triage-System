@@ -281,34 +281,89 @@ onMounted(() => {
 
 <style scoped>
 .patient-workstation-detail-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  gap: 20px;
+}
+
+.patient-workstation-detail-page :deep(.el-card) {
+  border: none;
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 22px 48px rgba(6, 95, 70, 0.08);
+}
+
+.patient-workstation-detail-page :deep(.el-card__header) {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(247, 253, 250, 0.98), rgba(255, 255, 255, 0.82));
+}
+
+.patient-workstation-detail-page :deep(.el-card__body) {
+  padding: 22px;
+}
+
+.patient-workstation-detail-page :deep(.el-descriptions__body .el-descriptions__table) {
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.patient-workstation-detail-page :deep(.el-descriptions__label.el-descriptions__cell) {
+  min-width: 120px;
+  background: rgba(236, 253, 245, 0.84);
+  color: var(--muted-color);
+  font-weight: 700;
+}
+
+.patient-workstation-detail-page :deep(.el-descriptions__content.el-descriptions__cell) {
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-color);
 }
 
 .hero-grid,
 .detail-grid {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 16px;
+  gap: 18px;
 }
 
 .hero-card {
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(236, 254, 255, 0.92));
+  position: relative;
+  overflow: hidden;
+  color: #f8fafc;
+  background:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.24), transparent 14rem),
+    linear-gradient(155deg, rgba(6, 95, 70, 0.96), rgba(8, 47, 73, 0.94));
+}
+
+.hero-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -48px -56px auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 72%);
+}
+
+.hero-card :deep(.el-card__body) {
+  position: relative;
+  z-index: 1;
+  padding: 26px;
 }
 
 .hero-card__eyebrow,
 .hero-card__desc,
 .action-item span {
-  color: var(--muted-color);
+  color: rgba(226, 232, 240, 0.8);
 }
 
 .hero-card__name {
   margin-top: 8px;
-  font-size: 30px;
-  line-height: 1.1;
+  font-size: clamp(30px, 3vw, 38px);
+  line-height: 1.06;
   font-weight: 800;
-  color: var(--title-color);
+  letter-spacing: -0.04em;
+  color: #f8fafc;
 }
 
 .hero-card__meta,
@@ -325,30 +380,47 @@ onMounted(() => {
 }
 
 .pill {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.12);
+  color: #ecfeff;
   font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .side-grid,
 .action-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 16px;
 }
 
 .action-item {
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.98);
+  position: relative;
+  overflow: hidden;
+  padding: 16px 18px 16px 22px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 1));
   border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.action-item::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #059669, #22d3ee);
 }
 
 .action-item strong,
 .action-item span {
   display: block;
+}
+
+.action-item strong {
+  color: var(--title-color);
 }
 
 .action-item span {
@@ -360,6 +432,14 @@ onMounted(() => {
   .hero-grid,
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .patient-workstation-detail-page :deep(.el-card__body),
+  .patient-workstation-detail-page :deep(.el-card__header) {
+    padding-left: 18px;
+    padding-right: 18px;
   }
 }
 </style>

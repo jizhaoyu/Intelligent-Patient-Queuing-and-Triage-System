@@ -2,6 +2,7 @@ package com.hospital.triage.modules.queue.controller;
 
 import com.hospital.triage.common.api.Result;
 import com.hospital.triage.modules.auth.security.AuthenticatedUser;
+import com.hospital.triage.modules.patient.entity.vo.PatientVO;
 import com.hospital.triage.modules.queue.entity.dto.QueueTicketCreateDTO;
 import com.hospital.triage.modules.queue.entity.vo.DeptQueueSummaryVO;
 import com.hospital.triage.modules.queue.entity.vo.QueueExceptionVO;
@@ -96,6 +97,13 @@ public class QueueController {
     @PreAuthorize("hasAuthority('queue:manage')")
     public Result<QueueTicketVO> cancel(@PathVariable String ticketNo, @AuthenticationPrincipal AuthenticatedUser user) {
         return Result.success(queueDispatchService.cancel(ticketNo, user == null ? "system" : user.getUsername()));
+    }
+
+    @PostMapping("/tickets/{ticketNo}/grant-priority-revisit")
+    @PreAuthorize("hasAuthority('queue:call')")
+    public Result<PatientVO> grantPriorityRevisit(@PathVariable String ticketNo,
+                                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        return Result.success(queueDispatchService.grantPriorityRevisit(ticketNo, user == null ? "system" : user.getUsername()));
     }
 
     @GetMapping("/tickets/{ticketNo}/rank")

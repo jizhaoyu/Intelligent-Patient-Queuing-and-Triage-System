@@ -30,8 +30,8 @@
 
 ### 1.1 本轮关键口径
 
-- `POST /api/patient-queue/enroll` 已正式定义为“院内自助机取号”接口。
-- 患者端不引入 PATIENT 角色或 JWT，公开接口继续使用 `patientNo + phoneSuffix` 校验。
+- `POST /api/patient-queue/enroll` 已正式定义为“院内自助机取号 / 建档一体入口”。
+- 患者端不引入 PATIENT 角色或 JWT，公开接口继续使用“身份标识 + 手机号后 4 位”完成校验；已有患者支持 `patientNo` 或 `patientName`，新患者支持现场建档。
 - `POST /api/queues/tickets` 继续保留，但产品定位统一为“异常补录 / 管理员修复入口”。
 - 队列与事件返回增加来源审计字段：
   - `sourceType`
@@ -117,7 +117,7 @@
 ### 3.2 `GET /api/patients/{id}`
 
 说明：查询患者详情。  
-权限：`patient:manage`
+权限：`patient:manage` 或 `queue:call`
 
 ### 3.3 `GET /api/patients`
 
@@ -207,7 +207,7 @@
 
 说明：患者查询当前排队进度。  
 权限：公开接口  
-请求结构保持不变，继续使用 `patientNo + phoneSuffix`
+请求时必须在 `patientNo` 与 `patientName` 中二选一，并配合 `phoneSuffix`
 
 请求示例：
 
@@ -222,7 +222,8 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `patientNo` | String | 是 | 患者编号 |
+| `patientNo` | String | 否 | 患者编号，与 `patientName` 二选一 |
+| `patientName` | String | 否 | 患者姓名，与 `patientNo` 二选一 |
 | `phoneSuffix` | String | 是 | 手机号后 4 位 |
 
 返回 `data` 主要字段：
@@ -247,26 +248,54 @@
 | `triageLevel` | 分诊等级 |
 | `enqueueTime` / `callTime` / `completeTime` | 排队关键时间点 |
 | `hasActiveQueue` | 是否存在有效排队 |
+| `nextStep` | 患者下一步指引卡片数据 |
+
+`nextStep` 结构：
+
+| 字段 | 说明 |
+| --- | --- |
+| `stage` | 当前阶段标识，可能取自 `visitStatus` 或 `queueStatus` |
+| `title` | 患者一眼可读的主标题 |
+| `action` | 当前建议动作 |
+| `locationHint` | 建议前往或停留的位置提示 |
+| `urgency` | 紧急程度：`LOW` / `NORMAL` / `HIGH` / `IMMEDIATE` |
 
 补充说明：
 
 - 当已分诊但尚未生成票据时，接口仍返回成功，并通过 `queueStatus = NONE` 与 `queueMessage` 提示当前情况。
 - 当患者编号或手机号后 4 位校验失败时，返回统一模糊提示，不泄露患者是否存在。
+- 患者姓名查询适用于院内人工辅助核验；对外仍不返回患者是否存在的明确信号。
+- `nextStep` 会根据当前就诊状态、排队状态、排位和预计等待时间，直接生成“现在该做什么”的指引文案。
 
 ### 5.2 `POST /api/patient-queue/enroll`
 
 说明：院内自助机正式取号接口。  
 权限：公开接口  
-定位：仅面向院内自助机，不是移动端患者账号入口
+定位：仅面向院内自助机，不是移动端患者账号入口；同一接口同时支持“已有患者取号”和“新患者建档后取号”
 
-请求示例：
+已有患者请求示例：
 
 ```json
 {
-  "patientNo": "P1234567890",
+  "patientMode": "EXISTING",
+  "patientName": "张三",
   "phoneSuffix": "1234",
   "deptId": 101,
   "chiefComplaint": "发热 2 天，咳嗽"
+}
+```
+
+新患者请求示例：
+
+```json
+{
+  "patientMode": "NEW",
+  "patientName": "李四",
+  "phone": "13800001234",
+  "gender": "FEMALE",
+  "birthDate": "1995-05-20",
+  "deptId": 101,
+  "chiefComplaint": "腹痛 3 小时"
 }
 ```
 
@@ -274,18 +303,28 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `patientNo` | String | 是 | 患者编号 |
-| `phoneSuffix` | String | 是 | 手机号后 4 位 |
+| `patientMode` | String | 否 | 办理方式，`EXISTING` 或 `NEW`，默认 `EXISTING` |
+| `patientNo` | String | 条件必填 | 既有患者模式下可与 `patientName` 二选一 |
+| `patientName` | String | 条件必填 | 既有患者模式下可与 `patientNo` 二选一；新患者模式下必填 |
+| `phoneSuffix` | String | 条件必填 | 既有患者模式下必填；新患者模式下可由 `phone` 自动提取 |
+| `phone` | String | 条件必填 | 新患者模式下必填，11 位手机号 |
+| `gender` | String | 条件必填 | 新患者模式下必填，推荐使用 `MALE` / `FEMALE` |
+| `birthDate` | LocalDate | 条件必填 | 新患者模式下必填 |
+| `idCard` | String | 否 | 新患者可选补充 |
+| `allergyHistory` | String | 否 | 新患者可选补充 |
+| `specialTags` | String | 否 | 新患者可选补充 |
 | `deptId` | Long | 是 | 本次就诊科室 |
 | `chiefComplaint` | String | 否 | 主诉 |
 
 行为说明：
 
-- 只允许既有患者取号，不再自动创建患者档案。
+- `patientMode = EXISTING` 时，必须提供 `patientNo` 或 `patientName` 之一，并配合 `phoneSuffix` 完成校验。
+- `patientMode = NEW` 时，会先创建或复用同名同手机号患者档案，再继续后续取号流程。
 - 若无法识别患者或校验失败，统一返回“请前往导诊台处理”。
 - 若已存在有效排队，直接返回当前排队视图，不重复建票。
 - 若无当前有效就诊，可自动创建本次 visit、自动到诊，再生成自助机评估并自动入队。
 - 返回结构与 `POST /api/patient-queue/query` 一致。
+- 自助取号成功后，返回的 `nextStep` 可直接用于页面顶部“下一步卡”展示，无需额外请求。
 
 ---
 
@@ -348,7 +387,7 @@
 ### 6.3 `GET /api/queues/waiting`
 
 说明：查询当前候诊摘要。  
-权限：登录后可用  
+权限：公开接口  
 查询参数：`deptId`（可选，`<= 0` 视为不限制）
 
 ### 6.4 `GET /api/queues/active`
@@ -360,7 +399,7 @@
 ### 6.5 `GET /api/queues/depts/{deptId}/waiting`
 
 说明：查询指定科室候诊摘要。  
-权限：登录后可用
+权限：公开接口
 
 ### 6.6 `POST /api/queues/rooms/{roomId}/call-next`
 
@@ -461,13 +500,13 @@
 ### 7.1 `GET /api/dashboard/summary`
 
 说明：查询后台运营看板摘要，可选按科室过滤。  
-权限：登录后可用  
+权限：公开接口  
 查询参数：`deptId`
 
 ### 7.2 `GET /api/dashboard/depts/{deptId}/summary`
 
 说明：查询指定科室看板摘要。  
-权限：登录后可用
+权限：公开接口
 
 返回 `data` 主要字段：
 
@@ -484,11 +523,42 @@
 ### 7.3 `GET /api/dashboard/rooms/{roomId}/current`
 
 说明：查询指定诊室当前叫号信息。  
-权限：登录后可用
+权限：公开接口
 
 ---
 
-## 8. 推荐联调顺序
+## 8. 门诊辅助接口
+
+### 8.1 `GET /api/clinic/depts/options`
+
+说明：查询可挂号/可分诊科室下拉选项。  
+权限：公开接口
+
+返回 `data` 主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `deptId` | 科室 ID |
+| `deptCode` | 科室编码 |
+| `deptName` | 科室名称 |
+| `enabled` | 是否启用 |
+
+### 8.2 `GET /api/clinic/depts/rooms/{roomId}`
+
+说明：根据诊室 ID 反查所属科室 ID。  
+权限：登录后可用
+
+路径参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `roomId` | 诊室 ID |
+
+返回 `data`：`Long`，即所属 `deptId`
+
+---
+
+## 9. 推荐联调顺序
 
 当前版本推荐按以下顺序联调：
 

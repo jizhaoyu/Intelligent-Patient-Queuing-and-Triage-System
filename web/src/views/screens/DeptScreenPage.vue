@@ -477,9 +477,9 @@ function formatBoardRank(ticket?: QueueTicket | null) {
   return String(ticket.rank).padStart(2, '0')
 }
 
-function formatQueueOrder(index: number) {
+function formatQueueOrder(index = 0) {
   const queueSize = visibleQueueingTickets.value.length || 1
-  return String((index % queueSize) + 1)
+  return String((index % queueSize) + 1).padStart(2, '0')
 }
 
 function formatFocusRank(ticket?: QueueTicket | null) {

@@ -8,6 +8,8 @@ import java.util.List;
 @Data
 public class PatientQueueViewVO {
 
+    private PatientQueueNextStepVO nextStep;
+
     private String patientName;
     private String patientNo;
     private Long patientId;
@@ -24,9 +26,13 @@ public class PatientQueueViewVO {
     private Long roomId;
     private String roomName;
     private String doctorName;
+    private Boolean waitingForConsultation;
+    private String roomAssignmentStatus;
     private Long rank;
     private Long waitingCount;
+    private Long roomWaitingCount;
     private Long estimatedWaitMinutes;
+    private Long roomEstimatedWaitMinutes;
     private Long waitedMinutes;
     private Integer triageLevel;
     private Integer aiSuggestedLevel;

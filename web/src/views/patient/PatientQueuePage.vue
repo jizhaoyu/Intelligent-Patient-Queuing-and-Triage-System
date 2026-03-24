@@ -6,7 +6,7 @@
           <div class="patient-queue-hero__eyebrow">院内患者排队查询</div>
           <h1>查询当前排队进度</h1>
           <p>
-            适用于院内自助机取号或护士分诊后的结果查询。请输入患者编号与手机号后 4 位，查看当前候诊状态、票号、排位与预计等待时间。
+            适用于院内自助机取号或护士分诊后的结果查询。请输入患者编号与手机号后 4 位，系统会返回当前候诊状态、票号、排位、预计等待时间，以及现在该做什么。
           </p>
         </div>
         <el-tag type="info" round effect="plain">仅支持查询本人当前就诊结果</el-tag>
@@ -68,6 +68,11 @@
       />
 
       <template v-if="result">
+        <PatientNextStepCard
+          v-if="result.nextStep"
+          :next-step="result.nextStep"
+        />
+
         <section class="patient-queue-panels">
           <el-card shadow="hover" class="patient-queue-card patient-queue-card--status">
             <template #header>
@@ -127,12 +132,12 @@
                 <strong>{{ formatCount(result.rank) }}</strong>
               </article>
               <article class="patient-queue-progress-item">
-                <span>前方人数</span>
-                <strong>{{ formatCount(result.waitingCount) }}</strong>
+                <span>前方人数（当前诊室）</span>
+                <strong>{{ formatCount(result.roomWaitingCount ?? result.waitingCount) }}</strong>
               </article>
               <article class="patient-queue-progress-item">
-                <span>预计等待</span>
-                <strong>{{ formatMinutes(result.estimatedWaitMinutes) }}</strong>
+                <span>预计等待（当前诊室）</span>
+                <strong>{{ formatMinutes(result.roomEstimatedWaitMinutes ?? result.estimatedWaitMinutes) }}</strong>
               </article>
               <article class="patient-queue-progress-item">
                 <span>已等待</span>
@@ -161,6 +166,7 @@
 import { reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { queryPatientQueue } from '@/api/patient-queue'
+import PatientNextStepCard from '@/components/patient/PatientNextStepCard.vue'
 import type { PatientQueueQueryDTO, PatientQueueView } from '@/types/patient-queue'
 
 const formRef = ref<FormInstance>()
@@ -257,31 +263,60 @@ function formatMinutes(value?: number) {
 <style scoped>
 .patient-queue-page {
   min-height: 100vh;
-  padding: 32px 20px 48px;
+  padding: 32px 20px 56px;
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.14), transparent 24rem),
+    radial-gradient(circle at 84% 12%, rgba(16, 185, 129, 0.12), transparent 24rem),
+    linear-gradient(180deg, #f3fcfd 0%, #eef7fb 48%, #f8fbfd 100%);
 }
 
 .patient-queue-shell {
   max-width: 1120px;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 20px;
 }
 
 .patient-queue-hero {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 28px 32px;
-  border-radius: 28px;
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.92), rgba(14, 116, 144, 0.92));
+  gap: 20px;
+  padding: 32px;
+  border-radius: 32px;
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  background:
+    radial-gradient(circle at top right, rgba(34, 211, 238, 0.24), transparent 14rem),
+    linear-gradient(135deg, rgba(8, 47, 73, 0.96), rgba(15, 118, 110, 0.92));
   color: #f8fafc;
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.14);
+  box-shadow: 0 24px 60px rgba(8, 47, 73, 0.18);
+}
+
+.patient-queue-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -56px -80px auto;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 70%);
+  pointer-events: none;
+}
+
+.patient-queue-hero > * {
+  position: relative;
+  z-index: 1;
 }
 
 .patient-queue-hero__eyebrow {
+  display: inline-flex;
+  padding: 6px 12px;
   margin-bottom: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -290,19 +325,86 @@ function formatMinutes(value?: number) {
 
 .patient-queue-hero h1 {
   margin: 0;
-  font-size: 34px;
-  line-height: 1.2;
+  font-size: clamp(32px, 4vw, 42px);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
 }
 
 .patient-queue-hero p {
-  margin: 12px 0 0;
-  max-width: 720px;
+  margin: 14px 0 0;
+  max-width: 760px;
+  font-size: 15px;
+  line-height: 1.8;
   color: rgba(240, 253, 250, 0.9);
 }
 
 .patient-queue-card {
   border: none;
-  border-radius: 24px;
+  border-radius: 28px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 24px 54px rgba(8, 47, 73, 0.09);
+}
+
+.patient-queue-card--status {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 250, 0.96));
+}
+
+.patient-queue-card--progress {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 249, 255, 0.96));
+}
+
+.patient-queue-card :deep(.el-card__header) {
+  padding: 20px 24px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(255, 255, 255, 0.78));
+}
+
+.patient-queue-card :deep(.el-card__body) {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+}
+
+.patient-queue-card :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.patient-queue-card :deep(.el-form-item__label) {
+  font-weight: 700;
+  color: var(--title-color);
+}
+
+.patient-queue-card :deep(.el-input__wrapper) {
+  min-height: 50px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
+}
+
+.patient-queue-card :deep(.el-input__wrapper.is-focus) {
+  box-shadow:
+    0 0 0 4px rgba(34, 211, 238, 0.12),
+    inset 0 0 0 1px rgba(8, 145, 178, 0.38);
+}
+
+.patient-queue-card :deep(.el-descriptions__body .el-descriptions__table) {
+  overflow: hidden;
+  border-radius: 22px;
+}
+
+.patient-queue-card :deep(.el-descriptions__label.el-descriptions__cell) {
+  min-width: 124px;
+  background: rgba(240, 249, 255, 0.9);
+  color: var(--muted-color);
+  font-weight: 700;
+}
+
+.patient-queue-card :deep(.el-descriptions__content.el-descriptions__cell) {
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text-color);
 }
 
 .patient-queue-card__header {
@@ -314,13 +416,15 @@ function formatMinutes(value?: number) {
 
 .patient-queue-card__header strong {
   display: block;
-  color: #0f172a;
+  font-size: 16px;
+  color: var(--title-color);
 }
 
 .patient-queue-card__header div:last-child,
 .patient-queue-card__header > div > div {
   font-size: 13px;
-  color: #64748b;
+  line-height: 1.7;
+  color: var(--muted-color);
 }
 
 .patient-queue-form-grid {
@@ -334,15 +438,25 @@ function formatMinutes(value?: number) {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  justify-content: space-between;
 }
 
 .patient-queue-tip {
+  max-width: 44rem;
   font-size: 13px;
-  color: #64748b;
+  line-height: 1.7;
+  color: var(--muted-color);
 }
 
 .patient-queue-alert {
   margin-top: -4px;
+  border-radius: 18px;
+}
+
+.patient-queue-alert :deep(.el-alert) {
+  border-radius: 18px;
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  background: rgba(254, 242, 242, 0.92);
 }
 
 .patient-queue-panels {
@@ -352,19 +466,26 @@ function formatMinutes(value?: number) {
 }
 
 .patient-queue-summary {
-  margin-bottom: 18px;
+  display: grid;
+  gap: 10px;
+  padding: 20px 22px;
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(34, 211, 238, 0.1), rgba(16, 185, 129, 0.08));
+  border: 1px solid rgba(8, 145, 178, 0.12);
 }
 
 .patient-queue-name {
-  font-size: 28px;
-  line-height: 1.2;
-  font-weight: 700;
-  color: #0f172a;
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--title-color);
 }
 
 .patient-queue-message {
-  margin-top: 8px;
-  color: #475569;
+  color: var(--text-color);
+  line-height: 1.8;
 }
 
 .patient-queue-progress-grid {
@@ -374,28 +495,44 @@ function formatMinutes(value?: number) {
 }
 
 .patient-queue-progress-item {
+  position: relative;
+  overflow: hidden;
   padding: 20px;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #f8fafc, #eef6f4);
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.9));
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.patient-queue-progress-item::after {
+  content: "";
+  position: absolute;
+  inset: auto -24px -28px auto;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.18), transparent 72%);
 }
 
 .patient-queue-progress-item span {
   display: block;
   font-size: 13px;
-  color: #64748b;
+  color: var(--muted-color);
 }
 
 .patient-queue-progress-item strong {
   display: block;
   margin-top: 10px;
-  font-size: 30px;
-  line-height: 1.1;
-  color: #0f172a;
+  font-size: clamp(28px, 3vw, 34px);
+  line-height: 1.05;
+  color: var(--title-color);
 }
 
 .patient-queue-progress-item--highlight {
-  background: linear-gradient(135deg, rgba(20, 184, 166, 0.14), rgba(14, 165, 233, 0.14));
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.16), rgba(14, 165, 233, 0.16)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 250, 0.94));
+  border-color: rgba(8, 145, 178, 0.18);
 }
 
 .patient-queue-empty {
@@ -405,6 +542,10 @@ function formatMinutes(value?: number) {
 @media (max-width: 960px) {
   .patient-queue-panels {
     grid-template-columns: 1fr;
+  }
+
+  .patient-queue-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -420,6 +561,12 @@ function formatMinutes(value?: number) {
 
   .patient-queue-hero h1 {
     font-size: 28px;
+  }
+
+  .patient-queue-card :deep(.el-card__header),
+  .patient-queue-card :deep(.el-card__body) {
+    padding-left: 18px;
+    padding-right: 18px;
   }
 
   .patient-queue-form-grid,

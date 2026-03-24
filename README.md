@@ -9,6 +9,7 @@
 - 手工建票仅保留为“异常补录 / 管理员修复”
 - AI 已接入患者自助取号与人工分诊，但定位为“辅助建议层”，不可用时会回退到规则结果，不阻断主链路
 - 已修正工作台叫号页的状态展示逻辑：`CALLING` 患者不再错误显示等待排位/预计等待，且有在诊患者时不能重复“叫下一位”
+- 后台端已收口分诊评估入口：后台只保留建档与治理能力，旧的 `/admin/triage/assessments/new` 会自动回跳到 `/admin/visits/new`
 
 ## 当前入口
 
@@ -16,6 +17,7 @@
 
 - 地址：`http://localhost:5173/login`
 - 职责：患者档案、就诊建档、队列治理、异常修复、规则维护
+- 说明：不再直接承载分诊评估页面
 
 ### 工作台
 
@@ -209,18 +211,23 @@ AI_ENABLED=false
 
 - `/admin/patients`
 - `/admin/visits/new`
-- `/admin/triage/assessments/new`
 - `/admin/queues`
 - `/admin/queues/exceptions`
 - `/admin/queues/events`
 - `/admin/triage/rules`
+
+工作台侧常用入口：
+
+- `/workstation/triage/assessments/new`
+- `/workstation/queue-call`
+- `/workstation/patients`
 
 ## 典型业务流程
 
 ### 工作台主链路
 
 1. 管理员在后台完成患者建档、就诊登记与到诊
-2. 管理端或工作台完成分诊评估，系统生成规则结果与 AI 建议
+2. 分诊人员或诊室工作台在 `/workstation/triage/assessments/new` 完成分诊评估，系统生成规则结果与 AI 建议
 3. 系统自动生成或刷新 `WAITING` 票据
 4. 诊室医生在 `/workstation/queue-call` 叫号、复呼、过号、完成接诊
 

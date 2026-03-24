@@ -1,11 +1,13 @@
 package com.hospital.triage.modules.queue.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.hospital.triage.common.constant.RedisKeyConstants;
 import com.hospital.triage.common.enums.ErrorCodeEnum;
 import com.hospital.triage.common.enums.QueueEventTypeEnum;
 import com.hospital.triage.common.enums.QueueSourceTypeEnum;
 import com.hospital.triage.common.enums.QueueStatusEnum;
+import com.hospital.triage.common.enums.RoomAssignmentStatusEnum;
 import com.hospital.triage.common.enums.VisitStatusEnum;
 import com.hospital.triage.exception.ServiceException;
 import com.hospital.triage.modules.clinic.entity.po.ClinicDept;
@@ -13,6 +15,7 @@ import com.hospital.triage.modules.clinic.entity.po.ClinicRoom;
 import com.hospital.triage.modules.clinic.mapper.ClinicDeptMapper;
 import com.hospital.triage.modules.clinic.mapper.ClinicRoomMapper;
 import com.hospital.triage.modules.patient.entity.po.PatientInfo;
+import com.hospital.triage.modules.patient.entity.vo.PatientVO;
 import com.hospital.triage.modules.patient.mapper.PatientInfoMapper;
 import com.hospital.triage.modules.queue.entity.dto.QueueTicketCreateDTO;
 import com.hospital.triage.modules.queue.entity.po.QueueEventLog;
@@ -55,6 +58,10 @@ import java.util.stream.Collectors;
 @Service
 public class QueueDispatchServiceImpl implements QueueDispatchService {
 
+    private static final double CONSULTATION_LOCK_ROOM_SCORE_BONUS = 1_000_000_000_000D;
+    private static final double TRIAGE_LEVEL_ORDER_SCORE_BAND = 10_000_000_000D;
+    private static final String CLAIM_SOURCE_OVERFLOW = "overflow";
+    private static final String PRIORITY_REVISIT_REASON_PREFIX = "一次性优先复诊加权 +";
     private final QueueTicketMapper queueTicketMapper;
     private final QueueEventLogMapper queueEventLogMapper;
     private final ClinicDeptMapper clinicDeptMapper;
@@ -119,23 +126,25 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         TriageAssessment assessment = requireAssessment(assessmentId);
         validateAssessmentBinding(visitRecord, assessment);
         Long roomId = pickRoomIdForKiosk(assessment);
+        String lastAdjustReason = resolveKioskLastAdjustReason(assessment);
         return upsertTicket(visitRecord, assessment, roomId, "kiosk", "院内自助机取号",
-                QueueSourceTypeEnum.KIOSK, "院内自助机正式取号", null);
+                QueueSourceTypeEnum.KIOSK, "院内自助机正式取号", lastAdjustReason);
     }
 
     @Override
     public QueueTicketVO getLatestTicketByVisitId(Long visitId) {
-        QueueTicket ticket = findLatestTicketByVisitId(visitId);
+        QueueTicket ticket = repairOverflowRoomAssignment(findLatestTicketByVisitId(visitId));
         return ticket == null ? null : enrich(ticket);
     }
 
     @Override
     public QueueTicketVO getTicket(String ticketNo) {
-        return enrich(requireTicket(ticketNo));
+        return enrich(repairOverflowRoomAssignment(requireTicket(ticketNo)));
     }
 
     @Override
     public DeptQueueSummaryVO waitingList(Long deptId) {
+        repairOverflowRoomAssignments(deptId);
         List<QueueTicket> waitingTickets = listWaitingTickets(deptId);
         List<QueueTicket> callingTickets = listCallingTickets(deptId);
         Map<Long, String> patientNames = loadPatientNames(waitingTickets, callingTickets);
@@ -154,6 +163,9 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
     @Override
     public List<QueueTicketVO> listActiveTickets(Long deptId, Long roomId) {
+        if (roomId == null) {
+            repairOverflowRoomAssignments(deptId);
+        }
         List<QueueTicket> waitingTickets = roomId != null ? listWaitingTicketsByRoom(roomId) : listWaitingTickets(deptId);
         List<QueueTicket> callingTickets = listCallingTickets(deptId, roomId);
         Map<Long, String> patientNames = loadPatientNames(waitingTickets, callingTickets);
@@ -176,7 +188,9 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         int maxAttempts = retryTimes + 1;
         boolean waitingIndexRebuilt = false;
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            clearStaleCallingTicket(roomId);
+            if (clearStaleCallingTicket(roomId)) {
+                throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "当前诊室仍有叫号中的患者，请先完成当前处理");
+            }
             QueueClaimResult claimResult = claimNext(roomId, deptId);
             if (claimResult == null || !StringUtils.hasText(claimResult.getTicketNo())) {
                 if (!waitingIndexRebuilt && rebuildWaitingQueueIndex(roomId, deptId)) {
@@ -202,6 +216,8 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
             ticket.setStatus(QueueStatusEnum.CALLING.name());
             ticket.setCallTime(LocalDateTime.now());
             ticket.setRoomId(roomId);
+            ticket.setRoomAssignmentStatus(RoomAssignmentStatusEnum.ASSIGNED.name());
+            clearConsultationLock(ticket);
             if (queueTicketMapper.updateById(ticket) == 0) {
                 handleClaimUpdateFailure(roomId, claimResult.getTicketNo(), waitingRoomId);
                 continue;
@@ -209,6 +225,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
             removeTicketFromWaitingRedis(ticket.getTicketNo(), ticket.getDeptId(), waitingRoomId, ticket.getStatus());
             refreshCallingTicket(roomId, ticket.getTicketNo());
+            rebalanceConsultationLockForRooms(waitingRoomId, roomId);
             LocalDateTime now = ticket.getCallTime();
             recordEvent(ticket, QueueEventTypeEnum.CALL_NEXT, QueueStatusEnum.WAITING.name(), QueueStatusEnum.CALLING.name(), roomId, operatorName, "叫号");
             VisitRecord visitRecord = requireVisit(ticket.getVisitId());
@@ -216,7 +233,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
             visitRecord.setCurrentRoomId(roomId);
             visitRecordMapper.updateById(visitRecord);
             visitStatusSnapshotSyncService.syncFromVisit(visitRecord, now);
-            return enrich(ticket);
+            return enrich(reloadTicket(ticket));
         }
         throw new ServiceException(ErrorCodeEnum.NOT_FOUND.getCode(), "暂无待叫号患者");
     }
@@ -225,7 +242,8 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     @Transactional(rollbackFor = Exception.class)
     public QueueTicketVO recall(String ticketNo, String operatorName) {
         QueueTicket ticket = requireTicket(ticketNo);
-        if (!Objects.equals(ticket.getStatus(), QueueStatusEnum.CALLING.name()) && !Objects.equals(ticket.getStatus(), QueueStatusEnum.MISSED.name())) {
+        String fromStatus = ticket.getStatus();
+        if (!Objects.equals(fromStatus, QueueStatusEnum.CALLING.name()) && !Objects.equals(fromStatus, QueueStatusEnum.MISSED.name())) {
             throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "当前状态不可复呼");
         }
         int recallCount = ticket.getRecallCount() == null ? 0 : ticket.getRecallCount();
@@ -237,7 +255,13 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         ticket.setCallTime(LocalDateTime.now());
         queueTicketMapper.updateById(ticket);
         refreshCallingTicket(ticket.getRoomId(), ticket.getTicketNo());
-        recordEvent(ticket, QueueEventTypeEnum.RECALL, QueueStatusEnum.MISSED.name(), QueueStatusEnum.CALLING.name(), ticket.getRoomId(), operatorName, "复呼");
+        VisitRecord visitRecord = requireVisit(ticket.getVisitId());
+        visitRecord.setStatus(VisitStatusEnum.IN_TREATMENT.name());
+        visitRecord.setCurrentDeptId(ticket.getDeptId());
+        visitRecord.setCurrentRoomId(ticket.getRoomId());
+        visitRecordMapper.updateById(visitRecord);
+        visitStatusSnapshotSyncService.syncFromVisit(visitRecord, ticket.getCallTime());
+        recordEvent(ticket, QueueEventTypeEnum.RECALL, fromStatus, QueueStatusEnum.CALLING.name(), ticket.getRoomId(), operatorName, "复呼");
         return enrich(ticket);
     }
 
@@ -249,7 +273,14 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
             throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "当前状态不可标记过号");
         }
         changeStatus(ticket, QueueStatusEnum.MISSED, QueueEventTypeEnum.MISSED, ticket.getRoomId(), operatorName, "过号");
+        LocalDateTime now = LocalDateTime.now();
         queueTicketMapper.updateById(ticket);
+        VisitRecord visitRecord = requireVisit(ticket.getVisitId());
+        visitRecord.setStatus(VisitStatusEnum.QUEUING.name());
+        visitRecord.setCurrentDeptId(ticket.getDeptId());
+        visitRecord.setCurrentRoomId(ticket.getRoomId());
+        visitRecordMapper.updateById(visitRecord);
+        visitStatusSnapshotSyncService.syncFromVisit(visitRecord, now);
         return enrich(ticket);
     }
 
@@ -275,17 +306,41 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     @Transactional(rollbackFor = Exception.class)
     public QueueTicketVO cancel(String ticketNo, String operatorName) {
         QueueTicket ticket = requireTicket(ticketNo);
+        Long previousRoomId = ticket.getRoomId();
         if (Objects.equals(ticket.getStatus(), QueueStatusEnum.COMPLETED.name()) || Objects.equals(ticket.getStatus(), QueueStatusEnum.CANCELLED.name())) {
             throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "当前状态不可取消");
         }
         changeStatus(ticket, QueueStatusEnum.CANCELLED, QueueEventTypeEnum.CANCEL, ticket.getRoomId(), operatorName, "取消排队");
         LocalDateTime now = LocalDateTime.now();
         queueTicketMapper.updateById(ticket);
+        rebalanceConsultationLockForRooms(previousRoomId);
         VisitRecord visitRecord = requireVisit(ticket.getVisitId());
         visitRecord.setStatus(VisitStatusEnum.CANCELLED.name());
         visitRecordMapper.updateById(visitRecord);
         visitStatusSnapshotSyncService.syncFromVisit(visitRecord, now);
         return enrich(ticket);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PatientVO grantPriorityRevisit(String ticketNo, String operatorName) {
+        QueueTicket ticket = requireTicket(ticketNo);
+        if (Objects.equals(ticket.getStatus(), QueueStatusEnum.CANCELLED.name())) {
+            throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "已取消的排队记录不能设置优先复诊");
+        }
+        PatientInfo patientInfo = requirePatient(ticket.getPatientId());
+        if (Boolean.TRUE.equals(patientInfo.getPriorityRevisitPending())) {
+            throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "该患者已存在待使用的优先复诊权限");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        patientInfoMapper.update(null, new UpdateWrapper<PatientInfo>()
+                .eq("id", patientInfo.getId())
+                .set("priority_revisit_pending", 1)
+                .set("priority_revisit_granted_time", now)
+                .set("priority_revisit_granted_by", operatorName));
+        recordEvent(ticket, QueueEventTypeEnum.GRANT_PRIORITY_REVISIT, ticket.getStatus(), ticket.getStatus(),
+                ticket.getRoomId(), operatorName, "设置下次复诊优先一次性权限");
+        return toPatientVO(requirePatient(patientInfo.getId()));
     }
 
     @Override
@@ -305,18 +360,22 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     }
 
     double calculateQueueScore(QueueTicket ticket, LocalDateTime now) {
-        QueuePriorityContext priorityContext = buildPriorityContext(ticket, now, resolveDeptSurgeMode(ticket.getDeptId()));
-        return calculateQueueScore(priorityContext);
+        return calculateQueueScore(ticket, now, resolveDeptSurgeMode(ticket.getDeptId()));
     }
 
     private double calculateQueueScore(QueueTicket ticket, LocalDateTime now, boolean surgeMode) {
-        return calculateQueueScore(buildPriorityContext(ticket, now, surgeMode));
+        return buildQueueOrderScore(ticket, buildPriorityContext(ticket, now, surgeMode));
     }
 
-    private double calculateQueueScore(QueuePriorityContext priorityContext) {
+    private double calculateQueueScoreWithinTriageLevel(QueuePriorityContext priorityContext) {
         return -priorityContext.getEffectivePriorityScore() * 1_000_000D
                 - priorityContext.getAgingScore() * 1_000D
                 + priorityContext.getWaitingMinutes();
+    }
+
+    private double buildQueueOrderScore(QueueTicket ticket, QueuePriorityContext priorityContext) {
+        return normalizeTriageLevelForOrdering(ticket) * TRIAGE_LEVEL_ORDER_SCORE_BAND
+                + calculateQueueScoreWithinTriageLevel(priorityContext);
     }
 
     private QueuePriorityContext buildPriorityContext(QueueTicket ticket, LocalDateTime now, boolean surgeMode) {
@@ -342,6 +401,13 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
     private long resolveWaitingMinutes(QueueTicket ticket, LocalDateTime now) {
         return ticket.getEnqueueTime() == null ? 0 : Math.max(Duration.between(ticket.getEnqueueTime(), now).toMinutes(), 0);
+    }
+
+    private int normalizeTriageLevelForOrdering(QueueTicket ticket) {
+        if (ticket == null || ticket.getTriageLevel() == null || ticket.getTriageLevel() <= 0) {
+            return 99;
+        }
+        return ticket.getTriageLevel();
     }
 
     private boolean resolveDeptSurgeMode(Long deptId) {
@@ -455,28 +521,37 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         if (normalizedRoomId == null && existing != null && Objects.equals(existing.getStatus(), QueueStatusEnum.WAITING.name())) {
             normalizedRoomId = existing.getRoomId();
         }
+        if (normalizedRoomId == null) {
+            normalizedRoomId = pickRoomIdForKiosk(assessment);
+        }
+        String roomAssignmentStatus = resolveRoomAssignmentStatus(assessment, normalizedRoomId);
         if (existing == null) {
-            QueueTicket ticket = buildWaitingTicket(visitRecord, assessment, deptId, normalizedRoomId, sourceType, sourceRemark, lastAdjustReason);
+            QueueTicket ticket = buildWaitingTicket(visitRecord, assessment, deptId, normalizedRoomId, roomAssignmentStatus,
+                    sourceType, sourceRemark, lastAdjustReason);
             queueTicketMapper.insert(ticket);
             syncWaitingTicket(ticket);
+            rebalanceConsultationLockForRooms(ticket.getRoomId());
             recordEvent(ticket, QueueEventTypeEnum.ENQUEUE, null, QueueStatusEnum.WAITING.name(), ticket.getRoomId(), operatorName, remark);
             updateVisitAfterEnqueue(visitRecord, ticket);
-            return enrich(ticket);
+            return enrich(reloadTicket(ticket));
         }
         if (!Objects.equals(existing.getStatus(), QueueStatusEnum.WAITING.name())) {
             throw new ServiceException(ErrorCodeEnum.CONFLICT.getCode(), "当前就诊已有进行中的排队票据");
         }
-        refreshWaitingTicket(existing, assessment, deptId, normalizedRoomId, sourceType, sourceRemark, lastAdjustReason);
+        Long previousRoomId = existing.getRoomId();
+        refreshWaitingTicket(existing, assessment, deptId, normalizedRoomId, roomAssignmentStatus, sourceType, sourceRemark, lastAdjustReason);
         queueTicketMapper.updateById(existing);
         syncWaitingTicket(existing);
+        rebalanceConsultationLockForRooms(previousRoomId, existing.getRoomId());
         updateVisitAfterEnqueue(visitRecord, existing);
-        return enrich(existing);
+        return enrich(reloadTicket(existing));
     }
 
     private QueueTicket buildWaitingTicket(VisitRecord visitRecord,
                                            TriageAssessment assessment,
                                            Long deptId,
                                            Long roomId,
+                                           String roomAssignmentStatus,
                                            QueueSourceTypeEnum sourceType,
                                            String sourceRemark,
                                            String lastAdjustReason) {
@@ -495,6 +570,9 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         ticket.setSourceType(sourceType == null ? null : sourceType.name());
         ticket.setSourceRemark(sourceRemark);
         ticket.setLastAdjustReason(lastAdjustReason);
+        ticket.setConsultationLocked(0);
+        ticket.setConsultationLockedTime(null);
+        ticket.setRoomAssignmentStatus(roomAssignmentStatus);
         ticket.setEnqueueTime(LocalDateTime.now());
         return ticket;
     }
@@ -506,6 +584,26 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
                                       QueueSourceTypeEnum sourceType,
                                       String sourceRemark,
                                       String lastAdjustReason) {
+        refreshWaitingTicket(ticket,
+                assessment,
+                deptId,
+                roomId,
+                StringUtils.hasText(ticket.getRoomAssignmentStatus())
+                        ? ticket.getRoomAssignmentStatus()
+                        : RoomAssignmentStatusEnum.ASSIGNED.name(),
+                sourceType,
+                sourceRemark,
+                lastAdjustReason);
+    }
+
+    private void refreshWaitingTicket(QueueTicket ticket,
+                                      TriageAssessment assessment,
+                                      Long deptId,
+                                      Long roomId,
+                                      String roomAssignmentStatus,
+                                      QueueSourceTypeEnum sourceType,
+                                      String sourceRemark,
+                                      String lastAdjustReason) {
         Long previousRoomId = ticket.getRoomId();
         Long previousDeptId = ticket.getDeptId();
         if (!Objects.equals(previousDeptId, deptId) || !Objects.equals(previousRoomId, roomId)) {
@@ -514,9 +612,13 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         ticket.setAssessmentId(assessment.getId());
         ticket.setDeptId(deptId);
         ticket.setRoomId(roomId);
+        if (!Objects.equals(previousRoomId, roomId) || roomId == null) {
+            clearConsultationLock(ticket);
+        }
         ticket.setTriageLevel(assessment.getTriageLevel());
         ticket.setPriorityScore(assessment.getPriorityScore());
         ticket.setFastTrack(assessment.getFastTrack());
+        ticket.setRoomAssignmentStatus(roomAssignmentStatus);
         ticket.setSourceType(sourceType == null ? ticket.getSourceType() : sourceType.name());
         ticket.setSourceRemark(sourceRemark);
         if (StringUtils.hasText(lastAdjustReason)) {
@@ -581,9 +683,221 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
             return rooms.get(0).getId();
         }
         Map<Long, RoomLoadSnapshot> roomLoadSnapshots = loadRoomLoadSnapshots(rooms);
-        Long priorityRoomId = resolvePriorityRoomIdForKiosk(deptId, rooms);
+        if (shouldUseEmergencyHighLevelOverflowStrategy(assessment)) {
+            return pickEmergencyHighLevelRoom(assessment, rooms, roomLoadSnapshots);
+        }
         boolean severeCase = isPriorityKioskCase(assessment);
-        return rooms.stream()
+        boolean highLevelCase = isRoomDiversionHighLevelCase(assessment);
+        List<ClinicRoom> highLevelAvailableRooms = highLevelCase
+                ? rooms.stream()
+                .filter(room -> {
+                    RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                    return snapshot == null || !snapshot.hasHighLevelActiveTicket();
+                })
+                .toList()
+                : List.of();
+        List<ClinicRoom> candidateRooms = highLevelCase && !highLevelAvailableRooms.isEmpty() ? highLevelAvailableRooms : rooms;
+        Long priorityRoomId = highLevelCase && highLevelAvailableRooms.size() != rooms.size()
+                ? null
+                : resolvePriorityRoomIdForKiosk(deptId, rooms);
+        return candidateRooms.stream()
+                .min(Comparator
+                        .comparingInt((ClinicRoom room) -> calculateKioskRoomScore(
+                                roomLoadSnapshots.get(room.getId()),
+                                severeCase,
+                                Objects.equals(room.getId(), priorityRoomId)))
+                        .thenComparing(room -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot == null ? null : snapshot.getLatestAssignedTime();
+                        }, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparingInt(room -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot == null ? 0 : snapshot.getTodayAssignedCount();
+                        })
+                        .thenComparingLong(ClinicRoom::getId))
+                 .map(ClinicRoom::getId)
+                 .orElse(null);
+    }
+
+    private QueueTicket reloadTicket(QueueTicket ticket) {
+        if (ticket == null || ticket.getId() == null) {
+            return ticket;
+        }
+        QueueTicket latest = queueTicketMapper.selectById(ticket.getId());
+        return latest == null ? ticket : latest;
+    }
+
+    private void repairOverflowRoomAssignments(Long deptId) {
+        if (deptId == null) {
+            return;
+        }
+        List<QueueTicket> overflowTickets = queueTicketMapper.selectList(new LambdaQueryWrapper<QueueTicket>()
+                .eq(QueueTicket::getDeptId, deptId)
+                .eq(QueueTicket::getStatus, QueueStatusEnum.WAITING.name())
+                .eq(QueueTicket::getRoomAssignmentStatus, RoomAssignmentStatusEnum.UNASSIGNED_OVERFLOW.name())
+                .isNull(QueueTicket::getRoomId)
+                .orderByAsc(QueueTicket::getEnqueueTime, QueueTicket::getId));
+        if (overflowTickets == null || overflowTickets.isEmpty()) {
+            return;
+        }
+        Map<Long, TriageAssessment> assessmentIndex = loadAssessments(overflowTickets);
+        List<Long> repairedRoomIds = new ArrayList<>();
+        for (QueueTicket overflowTicket : overflowTickets) {
+            QueueTicket repairedTicket = repairOverflowRoomAssignment(overflowTicket,
+                    overflowTicket.getAssessmentId() == null ? null : assessmentIndex.get(overflowTicket.getAssessmentId()));
+            if (repairedTicket != null && repairedTicket.getRoomId() != null) {
+                repairedRoomIds.add(repairedTicket.getRoomId());
+            }
+        }
+        if (!repairedRoomIds.isEmpty()) {
+            rebalanceConsultationLockForRooms(repairedRoomIds.toArray(Long[]::new));
+        }
+    }
+
+    private QueueTicket repairOverflowRoomAssignment(QueueTicket ticket) {
+        if (!isOverflowRoomAssignmentRepairNeeded(ticket)) {
+            return ticket;
+        }
+        TriageAssessment assessment = ticket.getAssessmentId() == null ? null : triageAssessmentMapper.selectById(ticket.getAssessmentId());
+        QueueTicket repairedTicket = repairOverflowRoomAssignment(ticket, assessment);
+        if (repairedTicket != null && repairedTicket.getRoomId() != null) {
+            rebalanceConsultationLockForRooms(repairedTicket.getRoomId());
+        }
+        return repairedTicket;
+    }
+
+    private QueueTicket repairOverflowRoomAssignment(QueueTicket ticket, TriageAssessment assessment) {
+        if (!isOverflowRoomAssignmentRepairNeeded(ticket)) {
+            return ticket;
+        }
+        Long repairedRoomId = pickRoomIdForKiosk(buildRepairAssessment(ticket, assessment));
+        if (repairedRoomId == null) {
+            return ticket;
+        }
+        ticket.setRoomId(repairedRoomId);
+        ticket.setRoomAssignmentStatus(RoomAssignmentStatusEnum.ASSIGNED.name());
+        clearConsultationLock(ticket);
+        queueTicketMapper.updateById(ticket);
+        syncWaitingTicket(ticket);
+        return reloadTicket(ticket);
+    }
+
+    private boolean isOverflowRoomAssignmentRepairNeeded(QueueTicket ticket) {
+        return ticket != null
+                && Objects.equals(ticket.getStatus(), QueueStatusEnum.WAITING.name())
+                && ticket.getRoomId() == null
+                && Objects.equals(ticket.getRoomAssignmentStatus(), RoomAssignmentStatusEnum.UNASSIGNED_OVERFLOW.name());
+    }
+
+    private TriageAssessment buildRepairAssessment(QueueTicket ticket, TriageAssessment assessment) {
+        if (assessment != null) {
+            return assessment;
+        }
+        TriageAssessment fallback = new TriageAssessment();
+        fallback.setRecommendDeptId(ticket == null ? null : ticket.getDeptId());
+        fallback.setTriageLevel(ticket == null ? null : ticket.getTriageLevel());
+        fallback.setAiSuggestedLevel(ticket == null ? null : ticket.getTriageLevel());
+        fallback.setFastTrack(ticket == null ? null : ticket.getFastTrack());
+        return fallback;
+    }
+
+    private String resolveRoomAssignmentStatus(TriageAssessment assessment, Long roomId) {
+        if (roomId == null && shouldUseEmergencyHighLevelOverflowStrategy(assessment)) {
+            return RoomAssignmentStatusEnum.UNASSIGNED_OVERFLOW.name();
+        }
+        return RoomAssignmentStatusEnum.ASSIGNED.name();
+    }
+
+    private boolean isEmergencyDept(Long deptId) {
+        if (deptId == null) {
+            return false;
+        }
+        ClinicDept dept = clinicDeptMapper.selectById(deptId);
+        if (dept == null) {
+            return false;
+        }
+        if (StringUtils.hasText(dept.getDeptCode()) && Objects.equals(dept.getDeptCode().trim().toUpperCase(Locale.ROOT), "EMERGENCY")) {
+            return true;
+        }
+        return StringUtils.hasText(dept.getDeptName()) && dept.getDeptName().contains("急诊");
+    }
+
+    private boolean shouldUseEmergencyHighLevelOverflowStrategy(TriageAssessment assessment) {
+        return assessment != null
+                && isEmergencyDept(assessment.getRecommendDeptId())
+                && isRoomDiversionHighLevelCase(assessment);
+    }
+
+    private Long pickEmergencyHighLevelRoom(TriageAssessment assessment,
+                                            List<ClinicRoom> rooms,
+                                            Map<Long, RoomLoadSnapshot> roomLoadSnapshots) {
+        if (rooms == null || rooms.isEmpty()) {
+            return null;
+        }
+        Long deptId = assessment == null ? null : assessment.getRecommendDeptId();
+        Long priorityRoomId = resolvePriorityRoomIdForKiosk(deptId, rooms);
+        int threshold = defaultInt(appQueueProperties.getEmergencyPriorityRoomHighLevelThreshold(), 2);
+        RoomLoadSnapshot prioritySnapshot = priorityRoomId == null ? null : roomLoadSnapshots.get(priorityRoomId);
+        if (priorityRoomId != null
+                && (prioritySnapshot == null || prioritySnapshot.getHighLevelActiveCount() < threshold)) {
+            return priorityRoomId;
+        }
+        List<ClinicRoom> diversionCandidates = rooms.stream()
+                .filter(room -> !Objects.equals(room.getId(), priorityRoomId))
+                .filter(room -> {
+                    RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                    return snapshot == null
+                            || (!snapshot.hasHighLevelActiveTicket() && !snapshot.hasLockedConsultationWaiting());
+                })
+                .toList();
+        if (diversionCandidates.isEmpty()) {
+            List<ClinicRoom> fallbackCandidates = rooms.stream()
+                    .filter(room -> !Objects.equals(room.getId(), priorityRoomId))
+                    .toList();
+            if (fallbackCandidates.isEmpty()) {
+                fallbackCandidates = rooms;
+            }
+            return selectEmergencyFallbackRoom(fallbackCandidates, roomLoadSnapshots, isPriorityKioskCase(assessment), priorityRoomId);
+        }
+        return selectBestRoom(diversionCandidates, roomLoadSnapshots, isPriorityKioskCase(assessment), null);
+    }
+
+    private Long selectEmergencyFallbackRoom(List<ClinicRoom> candidateRooms,
+                                             Map<Long, RoomLoadSnapshot> roomLoadSnapshots,
+                                             boolean severeCase,
+                                             Long priorityRoomId) {
+        return candidateRooms.stream()
+                .min(Comparator
+                        .comparing((ClinicRoom room) -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot != null && snapshot.hasLockedConsultationWaiting();
+                        })
+                        .thenComparingInt(room -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot == null ? 0 : snapshot.getHighLevelActiveCount();
+                        })
+                        .thenComparingInt(room -> calculateKioskRoomScore(
+                                roomLoadSnapshots.get(room.getId()),
+                                severeCase,
+                                Objects.equals(room.getId(), priorityRoomId)))
+                        .thenComparing(room -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot == null ? null : snapshot.getLatestAssignedTime();
+                        }, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparingInt(room -> {
+                            RoomLoadSnapshot snapshot = roomLoadSnapshots.get(room.getId());
+                            return snapshot == null ? 0 : snapshot.getTodayAssignedCount();
+                        })
+                        .thenComparingLong(ClinicRoom::getId))
+                .map(ClinicRoom::getId)
+                .orElse(null);
+    }
+
+    private Long selectBestRoom(List<ClinicRoom> candidateRooms,
+                                Map<Long, RoomLoadSnapshot> roomLoadSnapshots,
+                                boolean severeCase,
+                                Long priorityRoomId) {
+        return candidateRooms.stream()
                 .min(Comparator
                         .comparingInt((ClinicRoom room) -> calculateKioskRoomScore(
                                 roomLoadSnapshots.get(room.getId()),
@@ -620,10 +934,11 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
                         QueueStatusEnum.CALLING.name(),
                         QueueStatusEnum.MISSED.name()));
         if (activeTickets != null) {
+            int highLevelThreshold = defaultInt(appQueueProperties.getRoomDiversionHighLevelThreshold(), 2);
             activeTickets.forEach(ticket -> {
                 RoomLoadSnapshot snapshot = snapshots.get(ticket.getRoomId());
                 if (snapshot != null) {
-                    snapshot.recordActiveStatus(ticket.getStatus());
+                    snapshot.recordActiveTicket(ticket, highLevelThreshold);
                 }
             });
         }
@@ -648,16 +963,17 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
             return null;
         }
         Map<Long, Long> configuredRoomMap = appQueueProperties.getSeverePriorityRoomByDept();
-        if (configuredRoomMap != null) {
-            Long configuredRoomId = configuredRoomMap.get(deptId);
-            if (configuredRoomId != null && rooms.stream().anyMatch(room -> Objects.equals(room.getId(), configuredRoomId))) {
-                return configuredRoomId;
-            }
+        if (configuredRoomMap == null || configuredRoomMap.isEmpty()) {
+            return null;
+        }
+        Long configuredRoomId = configuredRoomMap.get(deptId);
+        if (configuredRoomId == null) {
+            return null;
         }
         return rooms.stream()
                 .map(ClinicRoom::getId)
-                .filter(Objects::nonNull)
-                .min(Long::compareTo)
+                .filter(roomId -> Objects.equals(roomId, configuredRoomId))
+                .findFirst()
                 .orElse(null);
     }
 
@@ -682,6 +998,17 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         return Objects.equals(normalizedRiskLevel, "HIGH") || Objects.equals(normalizedRiskLevel, "CRITICAL");
     }
 
+    private boolean isRoomDiversionHighLevelCase(TriageAssessment assessment) {
+        if (assessment == null) {
+            return false;
+        }
+        int highLevelThreshold = defaultInt(appQueueProperties.getRoomDiversionHighLevelThreshold(), 2);
+        if (assessment.getTriageLevel() != null) {
+            return assessment.getTriageLevel() <= highLevelThreshold;
+        }
+        return assessment.getAiSuggestedLevel() != null && assessment.getAiSuggestedLevel() <= highLevelThreshold;
+    }
+
     private int calculateKioskRoomScore(RoomLoadSnapshot snapshot, boolean severeCase, boolean priorityRoom) {
         RoomLoadSnapshot loadSnapshot = snapshot == null ? new RoomLoadSnapshot() : snapshot;
         int score = loadSnapshot.getWaitingCount() * defaultInt(appQueueProperties.getKioskWaitingWeight(), 100)
@@ -702,6 +1029,17 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
     private Long normalizeRoomId(Long roomId) {
         return roomId != null && roomId > 0 ? roomId : null;
+    }
+
+    private String resolveKioskLastAdjustReason(TriageAssessment assessment) {
+        if (assessment == null) {
+            return null;
+        }
+        int manualAdjustScore = defaultInt(assessment.getManualAdjustScore(), 0);
+        if (Boolean.TRUE.equals(assessment.getRevisit()) && manualAdjustScore > 0) {
+            return PRIORITY_REVISIT_REASON_PREFIX + manualAdjustScore;
+        }
+        return null;
     }
 
     private QueueTicket findActiveTicketByVisitId(Long visitId) {
@@ -729,6 +1067,9 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
                               String operatorName,
                               String remark) {
         String fromStatus = ticket.getStatus();
+        if (targetStatus != QueueStatusEnum.WAITING) {
+            clearConsultationLock(ticket);
+        }
         ticket.setStatus(targetStatus.name());
         if (targetStatus == QueueStatusEnum.WAITING) {
             syncWaitingTicket(ticket);
@@ -739,15 +1080,21 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     }
 
     private void syncWaitingTicket(QueueTicket ticket) {
-        QueuePriorityContext priorityContext = buildPriorityContext(ticket, LocalDateTime.now(), resolveDeptSurgeMode(ticket.getDeptId()));
+        LocalDateTime now = LocalDateTime.now();
+        boolean surgeMode = resolveDeptSurgeMode(ticket.getDeptId());
+        QueuePriorityContext priorityContext = buildPriorityContext(ticket, now, surgeMode);
         String deptKey = String.format(RedisKeyConstants.QUEUE_DEPT_ACTIVE, ticket.getDeptId());
-        double queueScore = -priorityContext.getEffectivePriorityScore() * 1_000_000D
-                - priorityContext.getAgingScore() * 1_000D
-                + priorityContext.getWaitingMinutes();
+        double queueScore = buildQueueOrderScore(ticket, priorityContext);
         redisTemplate.opsForZSet().add(deptKey, ticket.getTicketNo(), queueScore);
         if (ticket.getRoomId() != null) {
             String roomKey = String.format(RedisKeyConstants.QUEUE_ROOM_ACTIVE, ticket.getRoomId());
-            redisTemplate.opsForZSet().add(roomKey, ticket.getTicketNo(), queueScore);
+            double roomQueueScore = isConsultationLocked(ticket)
+                    ? queueScore - CONSULTATION_LOCK_ROOM_SCORE_BONUS
+                    : queueScore;
+            redisTemplate.opsForZSet().add(roomKey, ticket.getTicketNo(), roomQueueScore);
+            redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, ticket.getDeptId()), ticket.getTicketNo());
+        } else if (isUnassignedOverflowTicket(ticket)) {
+            redisTemplate.opsForZSet().add(String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, ticket.getDeptId()), ticket.getTicketNo(), queueScore);
         }
         redisTemplate.opsForHash().put(String.format(RedisKeyConstants.QUEUE_TICKET, ticket.getTicketNo()), "status", ticket.getStatus());
         redisTemplate.opsForHash().put(String.format(RedisKeyConstants.QUEUE_TICKET, ticket.getTicketNo()), "priorityScore", ticket.getPriorityScore());
@@ -755,14 +1102,15 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
     private void removeWaitingTicket(QueueTicket ticket) {
         removeTicketFromWaitingRedis(ticket.getTicketNo(), ticket.getDeptId(), ticket.getRoomId(), ticket.getStatus());
-        if (ticket.getRoomId() != null && !QueueStatusEnum.CALLING.name().equals(ticket.getStatus())) {
-            redisTemplate.delete(String.format(RedisKeyConstants.QUEUE_CALLING, ticket.getRoomId()));
+        if (ticket.getRoomId() != null && !Objects.equals(ticket.getStatus(), QueueStatusEnum.WAITING.name())) {
+            clearCallingTicket(ticket.getRoomId(), ticket.getTicketNo());
         }
     }
 
     private void removeTicketFromWaitingRedis(String ticketNo, Long deptId, Long waitingRoomId, String status) {
         if (deptId != null) {
             redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_DEPT_ACTIVE, deptId), ticketNo);
+            redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, deptId), ticketNo);
         }
         if (waitingRoomId != null) {
             redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_ROOM_ACTIVE, waitingRoomId), ticketNo);
@@ -776,7 +1124,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
                 STRING_REDIS_SERIALIZER,
                 List.of(
                         String.format(RedisKeyConstants.QUEUE_ROOM_ACTIVE, roomId),
-                        String.format(RedisKeyConstants.QUEUE_DEPT_ACTIVE, deptId),
+                        String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, deptId),
                         String.format(RedisKeyConstants.QUEUE_CALLING, roomId)
                 ),
                 String.valueOf(appQueueProperties.getCallingTtlSeconds()),
@@ -800,8 +1148,10 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         if (latest != null) {
             if (Objects.equals(latest.getStatus(), QueueStatusEnum.WAITING.name())) {
                 syncWaitingTicket(latest);
+                rebalanceConsultationLockForRooms(waitingRoomId, latest.getRoomId());
             } else {
                 removeTicketFromWaitingRedis(ticketNo, latest.getDeptId(), waitingRoomId, latest.getStatus());
+                rebalanceConsultationLockForRooms(waitingRoomId);
             }
         }
         clearCallingTicket(roomId, ticketNo);
@@ -810,6 +1160,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     private boolean rebuildWaitingQueueIndex(Long roomId, Long deptId) {
         if (deptId != null) {
             redisTemplate.delete(String.format(RedisKeyConstants.QUEUE_DEPT_ACTIVE, deptId));
+            redisTemplate.delete(String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, deptId));
         }
         if (roomId != null) {
             redisTemplate.delete(String.format(RedisKeyConstants.QUEUE_ROOM_ACTIVE, roomId));
@@ -828,6 +1179,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         }
         if (deptId != null) {
             redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_DEPT_ACTIVE, deptId), ticketNo);
+            redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_DEPT_UNASSIGNED_HIGH, deptId), ticketNo);
         }
         if (roomId != null) {
             redisTemplate.opsForZSet().remove(String.format(RedisKeyConstants.QUEUE_ROOM_ACTIVE, roomId), ticketNo);
@@ -835,23 +1187,40 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         redisTemplate.delete(String.format(RedisKeyConstants.QUEUE_TICKET, ticketNo));
     }
 
-    private void clearStaleCallingTicket(Long roomId) {
+    private boolean clearStaleCallingTicket(Long roomId) {
         if (roomId == null) {
-            return;
+            return false;
         }
         String callingKey = String.format(RedisKeyConstants.QUEUE_CALLING, roomId);
         Object current = redisTemplate.opsForValue().get(callingKey);
-        if (current == null) {
-            return;
+        if (current != null) {
+            String ticketNo = normalizeRedisTicketNo(String.valueOf(current));
+            QueueTicket ticket = getTicketOrNull(ticketNo);
+            if (ticket != null
+                    && Objects.equals(ticket.getStatus(), QueueStatusEnum.CALLING.name())
+                    && Objects.equals(ticket.getRoomId(), roomId)) {
+                refreshCallingTicket(roomId, ticket.getTicketNo());
+                return true;
+            }
+            redisTemplate.delete(callingKey);
         }
-        String ticketNo = normalizeRedisTicketNo(String.valueOf(current));
-        QueueTicket ticket = getTicketOrNull(ticketNo);
-        if (ticket != null
-                && Objects.equals(ticket.getStatus(), QueueStatusEnum.CALLING.name())
-                && Objects.equals(ticket.getRoomId(), roomId)) {
-            return;
+        QueueTicket latestCallingTicket = findLatestCallingTicketByRoom(roomId);
+        if (latestCallingTicket == null) {
+            return false;
         }
-        redisTemplate.delete(callingKey);
+        refreshCallingTicket(roomId, latestCallingTicket.getTicketNo());
+        return true;
+    }
+
+    private QueueTicket findLatestCallingTicketByRoom(Long roomId) {
+        if (roomId == null) {
+            return null;
+        }
+        return queueTicketMapper.selectOne(new LambdaQueryWrapper<QueueTicket>()
+                .eq(QueueTicket::getRoomId, roomId)
+                .eq(QueueTicket::getStatus, QueueStatusEnum.CALLING.name())
+                .orderByDesc(QueueTicket::getCallTime, QueueTicket::getUpdatedTime, QueueTicket::getId)
+                .last("limit 1"));
     }
 
     private void clearCallingTicket(Long roomId, String ticketNo) {
@@ -886,9 +1255,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         boolean surgeMode = resolveDeptSurgeMode(waitingTickets);
         LocalDateTime now = LocalDateTime.now();
         return waitingTickets.stream()
-                .sorted((a, b) -> Double.compare(
-                        calculateQueueScore(a, now, surgeMode),
-                        calculateQueueScore(b, now, surgeMode)))
+                .sorted((a, b) -> compareWaitingTickets(a, b, now, surgeMode))
                 .toList();
     }
 
@@ -899,13 +1266,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         if (waitingTickets == null || waitingTickets.isEmpty()) {
             return List.of();
         }
-        boolean surgeMode = resolveDeptSurgeMode(waitingTickets);
-        LocalDateTime now = LocalDateTime.now();
-        return waitingTickets.stream()
-                .sorted((a, b) -> Double.compare(
-                        calculateQueueScore(a, now, surgeMode),
-                        calculateQueueScore(b, now, surgeMode)))
-                .toList();
+        return sortRoomWaitingTickets(waitingTickets);
     }
 
     private List<QueueTicket> listWaitingTicketsAll() {
@@ -916,7 +1277,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         }
         LocalDateTime now = LocalDateTime.now();
         return waitingTickets.stream()
-                .sorted((a, b) -> Double.compare(calculateQueueScore(a, now), calculateQueueScore(b, now)))
+                .sorted((a, b) -> compareWaitingTickets(a, b, now, false))
                 .toList();
     }
 
@@ -1039,6 +1400,20 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         return assessment;
     }
 
+    private PatientInfo requirePatient(Long patientId) {
+        PatientInfo patientInfo = patientId == null ? null : patientInfoMapper.selectById(patientId);
+        if (patientInfo == null) {
+            throw new ServiceException(ErrorCodeEnum.NOT_FOUND.getCode(), "患者档案不存在");
+        }
+        return patientInfo;
+    }
+
+    private PatientVO toPatientVO(PatientInfo patientInfo) {
+        PatientVO patientVO = new PatientVO();
+        BeanUtils.copyProperties(patientInfo, patientVO);
+        return patientVO;
+    }
+
     private Long resolveDeptIdByRoom(Long roomId) {
         Long mappedDeptId = findRoomDeptId(roomId);
         if (mappedDeptId != null) {
@@ -1117,6 +1492,10 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         vo.setQueueStrategyMode(priorityContext.getQueueStrategyMode());
         vo.setSurgePriorityApplied(priorityContext.getSurgePriorityApplied());
         vo.setAgingBoostApplied(priorityContext.getAgingBoostApplied());
+        vo.setConsultationLocked(isConsultationLocked(ticket));
+        vo.setRoomAssignmentStatus(StringUtils.hasText(ticket.getRoomAssignmentStatus())
+                ? ticket.getRoomAssignmentStatus()
+                : RoomAssignmentStatusEnum.ASSIGNED.name());
         vo.setPatientName(patientNames.get(ticket.getPatientId()));
         vo.setPatientNo(patientNos.get(ticket.getPatientId()));
         vo.setDeptName(deptNames.get(ticket.getDeptId()));
@@ -1197,8 +1576,7 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     private boolean isWaitingForConsultation(QueueTicket ticket, List<QueueTicket> roomWaitingTickets) {
         return Objects.equals(ticket.getStatus(), QueueStatusEnum.WAITING.name())
                 && ticket.getRoomId() != null
-                && !roomWaitingTickets.isEmpty()
-                && Objects.equals(roomWaitingTickets.get(0).getTicketNo(), ticket.getTicketNo());
+                && isConsultationLocked(ticket);
     }
 
     private String resolveDisplayStatus(String status, boolean waitingForConsultation) {
@@ -1308,7 +1686,114 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
     private Map<Long, List<QueueTicket>> buildRoomWaitingTicketIndex(List<QueueTicket> waitingTickets) {
         return waitingTickets.stream()
                 .filter(ticket -> ticket.getRoomId() != null)
-                .collect(Collectors.groupingBy(QueueTicket::getRoomId, Collectors.toList()));
+                .collect(Collectors.groupingBy(QueueTicket::getRoomId,
+                        Collectors.collectingAndThen(Collectors.toList(), this::sortRoomWaitingTickets)));
+    }
+
+    private List<QueueTicket> sortRoomWaitingTickets(List<QueueTicket> waitingTickets) {
+        if (waitingTickets == null || waitingTickets.isEmpty()) {
+            return List.of();
+        }
+        boolean surgeMode = resolveDeptSurgeMode(waitingTickets);
+        LocalDateTime now = LocalDateTime.now();
+        return waitingTickets.stream()
+                .sorted((left, right) -> {
+                    int lockCompare = Boolean.compare(isConsultationLocked(right), isConsultationLocked(left));
+                    if (lockCompare != 0) {
+                        return lockCompare;
+                    }
+                    return compareWaitingTickets(left, right, now, surgeMode);
+                })
+                .toList();
+    }
+
+    private int compareWaitingTickets(QueueTicket left,
+                                      QueueTicket right,
+                                      LocalDateTime now,
+                                      boolean surgeMode) {
+        int scoreCompare = Double.compare(
+                calculateQueueScore(left, now, surgeMode),
+                calculateQueueScore(right, now, surgeMode));
+        if (scoreCompare != 0) {
+            return scoreCompare;
+        }
+        int enqueueCompare = Comparator.nullsLast(LocalDateTime::compareTo)
+                .compare(left.getEnqueueTime(), right.getEnqueueTime());
+        if (enqueueCompare != 0) {
+            return enqueueCompare;
+        }
+        int idCompare = Comparator.nullsLast(Long::compareTo)
+                .compare(left.getId(), right.getId());
+        if (idCompare != 0) {
+            return idCompare;
+        }
+        return Comparator.nullsLast(String::compareTo)
+                .compare(left.getTicketNo(), right.getTicketNo());
+    }
+
+    private void rebalanceConsultationLockForRooms(Long... roomIds) {
+        if (roomIds == null || roomIds.length == 0) {
+            return;
+        }
+        List<Long> uniqueRoomIds = new ArrayList<>();
+        for (Long roomId : roomIds) {
+            if (roomId != null && !uniqueRoomIds.contains(roomId)) {
+                uniqueRoomIds.add(roomId);
+            }
+        }
+        uniqueRoomIds.forEach(this::rebalanceConsultationLockForRoom);
+    }
+
+    private void rebalanceConsultationLockForRoom(Long roomId) {
+        if (roomId == null) {
+            return;
+        }
+        List<QueueTicket> waitingTickets = queueTicketMapper.selectList(new LambdaQueryWrapper<QueueTicket>()
+                .eq(QueueTicket::getRoomId, roomId)
+                .eq(QueueTicket::getStatus, QueueStatusEnum.WAITING.name()));
+        if (waitingTickets == null || waitingTickets.isEmpty()) {
+            return;
+        }
+        List<QueueTicket> sortedWaitingTickets = sortRoomWaitingTickets(waitingTickets);
+        QueueTicket lockedTicket = sortedWaitingTickets.stream()
+                .filter(this::isConsultationLocked)
+                .findFirst()
+                .orElse(null);
+        String keepTicketNo = (lockedTicket == null ? sortedWaitingTickets.get(0) : lockedTicket).getTicketNo();
+        LocalDateTime now = LocalDateTime.now();
+        for (QueueTicket waitingTicket : sortedWaitingTickets) {
+            boolean shouldLock = Objects.equals(waitingTicket.getTicketNo(), keepTicketNo);
+            boolean locked = isConsultationLocked(waitingTicket);
+            if (shouldLock && !locked) {
+                waitingTicket.setConsultationLocked(1);
+                waitingTicket.setConsultationLockedTime(now);
+                queueTicketMapper.updateById(waitingTicket);
+                syncWaitingTicket(waitingTicket);
+            } else if (!shouldLock && locked) {
+                clearConsultationLock(waitingTicket);
+                queueTicketMapper.updateById(waitingTicket);
+                syncWaitingTicket(waitingTicket);
+            }
+        }
+    }
+
+    private boolean isConsultationLocked(QueueTicket ticket) {
+        return ticket != null && Integer.valueOf(1).equals(ticket.getConsultationLocked());
+    }
+
+    private void clearConsultationLock(QueueTicket ticket) {
+        if (ticket == null) {
+            return;
+        }
+        ticket.setConsultationLocked(0);
+        ticket.setConsultationLockedTime(null);
+    }
+
+    private boolean isUnassignedOverflowTicket(QueueTicket ticket) {
+        return ticket != null
+                && ticket.getRoomId() == null
+                && Objects.equals(ticket.getStatus(), QueueStatusEnum.WAITING.name())
+                && Objects.equals(ticket.getRoomAssignmentStatus(), RoomAssignmentStatusEnum.UNASSIGNED_OVERFLOW.name());
     }
 
     private static final class RoomLoadSnapshot {
@@ -1316,21 +1801,36 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
         private int waitingCount;
         private int callingCount;
         private int missedCount;
+        private int highLevelActiveCount;
+        private int lockedConsultationWaitingCount;
         private int todayAssignedCount;
         private LocalDateTime latestAssignedTime;
 
-        private void recordActiveStatus(String status) {
+        private void recordActiveTicket(QueueTicket ticket, int highLevelThreshold) {
+            if (ticket == null) {
+                return;
+            }
+            String status = ticket.getStatus();
             if (Objects.equals(status, QueueStatusEnum.WAITING.name())) {
                 waitingCount++;
-                return;
-            }
-            if (Objects.equals(status, QueueStatusEnum.CALLING.name())) {
+                if (isHighLevelActiveTicket(ticket, highLevelThreshold)) {
+                    highLevelActiveCount++;
+                }
+                if (Integer.valueOf(1).equals(ticket.getConsultationLocked())) {
+                    lockedConsultationWaitingCount++;
+                }
+            } else if (Objects.equals(status, QueueStatusEnum.CALLING.name())) {
                 callingCount++;
-                return;
-            }
-            if (Objects.equals(status, QueueStatusEnum.MISSED.name())) {
+                if (isHighLevelActiveTicket(ticket, highLevelThreshold)) {
+                    highLevelActiveCount++;
+                }
+            } else if (Objects.equals(status, QueueStatusEnum.MISSED.name())) {
                 missedCount++;
             }
+        }
+
+        private boolean isHighLevelActiveTicket(QueueTicket ticket, int highLevelThreshold) {
+            return ticket.getTriageLevel() != null && ticket.getTriageLevel() <= highLevelThreshold;
         }
 
         private void recordAssignment(LocalDateTime assignedTime) {
@@ -1350,6 +1850,18 @@ public class QueueDispatchServiceImpl implements QueueDispatchService {
 
         private int getMissedCount() {
             return missedCount;
+        }
+
+        private boolean hasHighLevelActiveTicket() {
+            return highLevelActiveCount > 0;
+        }
+
+        private int getHighLevelActiveCount() {
+            return highLevelActiveCount;
+        }
+
+        private boolean hasLockedConsultationWaiting() {
+            return lockedConsultationWaitingCount > 0;
         }
 
         private int getTodayAssignedCount() {

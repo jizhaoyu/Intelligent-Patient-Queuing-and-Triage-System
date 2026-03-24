@@ -12,6 +12,8 @@ import com.hospital.triage.modules.queue.service.QueueDispatchService;
 import com.hospital.triage.modules.triage.entity.po.TriageAssessment;
 import com.hospital.triage.modules.triage.mapper.TriageAssessmentMapper;
 import com.hospital.triage.modules.triage.service.PatientTriageAiService;
+import com.hospital.triage.modules.triage.service.model.PatientTriageAiRequest;
+import com.hospital.triage.modules.triage.service.model.PatientTriageAiResult;
 import com.hospital.triage.modules.visit.entity.dto.VisitCreateDTO;
 import com.hospital.triage.modules.visit.entity.po.VisitRecord;
 import com.hospital.triage.modules.visit.entity.vo.VisitVO;
@@ -117,6 +119,26 @@ class PatientSelfQueueServiceImplTest {
     }
 
     @Test
+    void shouldKeepPriorityRevisitPrivilegeWhenPatientAlreadyQueued() {
+        when(clinicDeptMapper.selectById(1L)).thenReturn(enabledDept(1L, "Emergency"));
+        PatientInfo patientInfo = existingPatient();
+        patientInfo.setPriorityRevisitPending(true);
+        when(patientInfoMapper.selectOne(any())).thenReturn(patientInfo);
+
+        PatientQueueViewVO queuedView = new PatientQueueViewVO();
+        queuedView.setHasActiveQueue(true);
+        queuedView.setQueueStatus("WAITING");
+        queuedView.setTicketNo("20260320-1-0001");
+        when(patientQueueQueryService.query(any())).thenReturn(queuedView);
+
+        PatientQueueViewVO result = service.enroll(enrollDTO());
+
+        assertThat(result).isSameAs(queuedView);
+        verify(patientInfoMapper, never()).update(any(), any());
+        verifyNoInteractions(visitService, triageAssessmentMapper, queueDispatchService);
+    }
+
+    @Test
     void shouldCreateVisitAndEnqueueFromKioskForKnownPatient() {
         when(clinicDeptMapper.selectById(1L)).thenReturn(enabledDept(1L, "Emergency"));
         when(patientInfoMapper.selectOne(any())).thenReturn(existingPatient());
@@ -212,6 +234,111 @@ class PatientSelfQueueServiceImplTest {
 
         assertThat(result).isSameAs(finalQuery);
         verify(queueDispatchService).enqueueFromKiosk(88L, 66L);
+    }
+
+    @Test
+    void shouldConsumePriorityRevisitPrivilegeOnNextSuccessfulEnroll() {
+        when(clinicDeptMapper.selectById(1L)).thenReturn(enabledDept(1L, "Emergency"));
+        PatientInfo patientInfo = existingPatient();
+        patientInfo.setPriorityRevisitPending(true);
+        when(patientInfoMapper.selectOne(any())).thenReturn(patientInfo);
+
+        PatientQueueViewVO firstQuery = new PatientQueueViewVO();
+        firstQuery.setHasActiveQueue(false);
+        PatientQueueViewVO finalQuery = new PatientQueueViewVO();
+        finalQuery.setHasActiveQueue(true);
+        finalQuery.setTicketNo("20260320-1-0003");
+        when(patientQueueQueryService.query(any())).thenReturn(firstQuery, finalQuery);
+
+        VisitVO createdVisit = new VisitVO();
+        createdVisit.setId(101L);
+        VisitVO arrivedVisit = new VisitVO();
+        arrivedVisit.setId(101L);
+        when(visitService.create(any())).thenReturn(createdVisit);
+        when(visitService.arrive(101L)).thenReturn(arrivedVisit);
+
+        VisitRecord registeredVisit = new VisitRecord();
+        registeredVisit.setId(101L);
+        registeredVisit.setPatientId(11L);
+        registeredVisit.setStatus("REGISTERED");
+        VisitRecord arrivedRecord = new VisitRecord();
+        arrivedRecord.setId(101L);
+        arrivedRecord.setPatientId(11L);
+        arrivedRecord.setStatus("ARRIVED");
+        when(visitRecordMapper.selectById(101L)).thenReturn(registeredVisit, arrivedRecord);
+
+        doAnswer(invocation -> {
+            TriageAssessment assessment = invocation.getArgument(0);
+            assessment.setId(78L);
+            return 1;
+        }).when(triageAssessmentMapper).insert(any(TriageAssessment.class));
+
+        PatientQueueViewVO result = service.enroll(enrollDTO());
+
+        assertThat(result).isSameAs(finalQuery);
+        verify(queueDispatchService).enqueueFromKiosk(101L, 78L);
+        verify(patientInfoMapper).update(any(), any());
+
+        ArgumentCaptor<PatientTriageAiRequest> aiRequestCaptor = ArgumentCaptor.forClass(PatientTriageAiRequest.class);
+        verify(patientTriageAiService).analyze(aiRequestCaptor.capture());
+        assertThat(aiRequestCaptor.getValue().getRevisit()).isTrue();
+
+        ArgumentCaptor<TriageAssessment> assessmentCaptor = ArgumentCaptor.forClass(TriageAssessment.class);
+        verify(triageAssessmentMapper).insert(assessmentCaptor.capture());
+        assertThat(assessmentCaptor.getValue().getRevisit()).isTrue();
+        assertThat(assessmentCaptor.getValue().getManualAdjustScore()).isEqualTo(120);
+        assertThat(assessmentCaptor.getValue().getPriorityScore()).isEqualTo(120);
+    }
+
+    @Test
+    void shouldNotUsePriorityRevisitToOvertakeLevelOnePatients() {
+        when(clinicDeptMapper.selectById(1L)).thenReturn(enabledDept(1L, "Emergency"));
+        PatientInfo patientInfo = existingPatient();
+        patientInfo.setPriorityRevisitPending(true);
+        when(patientInfoMapper.selectOne(any())).thenReturn(patientInfo);
+        when(patientTriageAiService.analyze(any())).thenReturn(PatientTriageAiResult.builder()
+                .suggestedLevel(2)
+                .suggestedDeptId(1L)
+                .suggestedPriorityScore(950)
+                .build());
+
+        PatientQueueViewVO firstQuery = new PatientQueueViewVO();
+        firstQuery.setHasActiveQueue(false);
+        PatientQueueViewVO finalQuery = new PatientQueueViewVO();
+        finalQuery.setHasActiveQueue(true);
+        finalQuery.setTicketNo("20260320-1-0004");
+        when(patientQueueQueryService.query(any())).thenReturn(firstQuery, finalQuery);
+
+        VisitVO createdVisit = new VisitVO();
+        createdVisit.setId(102L);
+        VisitVO arrivedVisit = new VisitVO();
+        arrivedVisit.setId(102L);
+        when(visitService.create(any())).thenReturn(createdVisit);
+        when(visitService.arrive(102L)).thenReturn(arrivedVisit);
+
+        VisitRecord registeredVisit = new VisitRecord();
+        registeredVisit.setId(102L);
+        registeredVisit.setPatientId(11L);
+        registeredVisit.setStatus("REGISTERED");
+        VisitRecord arrivedRecord = new VisitRecord();
+        arrivedRecord.setId(102L);
+        arrivedRecord.setPatientId(11L);
+        arrivedRecord.setStatus("ARRIVED");
+        when(visitRecordMapper.selectById(102L)).thenReturn(registeredVisit, arrivedRecord);
+
+        doAnswer(invocation -> {
+            TriageAssessment assessment = invocation.getArgument(0);
+            assessment.setId(79L);
+            return 1;
+        }).when(triageAssessmentMapper).insert(any(TriageAssessment.class));
+
+        service.enroll(enrollDTO());
+
+        ArgumentCaptor<TriageAssessment> assessmentCaptor = ArgumentCaptor.forClass(TriageAssessment.class);
+        verify(triageAssessmentMapper).insert(assessmentCaptor.capture());
+        assertThat(assessmentCaptor.getValue().getTriageLevel()).isEqualTo(2);
+        assertThat(assessmentCaptor.getValue().getManualAdjustScore()).isEqualTo(49);
+        assertThat(assessmentCaptor.getValue().getPriorityScore()).isEqualTo(999);
     }
 
     @Test

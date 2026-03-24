@@ -176,6 +176,78 @@ class TriageAssessmentServiceImplTest {
     }
 
     @Test
+    void shouldPreferEmergencyLowAcuityRuleOverGeneralRuleWhenKeywordIsMoreSpecific() throws Exception {
+        TriageRule emergencyRule = new TriageRule();
+        emergencyRule.setId(70L);
+        emergencyRule.setEnabled(1);
+        emergencyRule.setRuleCode("RULE_EMERG_MILD_HEADACHE");
+        emergencyRule.setSymptomKeyword("轻度头痛,头胀不适");
+        emergencyRule.setTriageLevel(4);
+        emergencyRule.setRecommendDeptId(1L);
+        emergencyRule.setSpecialWeight(22);
+
+        TriageRule generalRule = new TriageRule();
+        generalRule.setId(39L);
+        generalRule.setEnabled(1);
+        generalRule.setRuleCode("RULE_GEN_HEADACHE");
+        generalRule.setSymptomKeyword("头痛,头胀");
+        generalRule.setTriageLevel(4);
+        generalRule.setRecommendDeptId(4L);
+        generalRule.setSpecialWeight(20);
+
+        when(triageRuleMapper.selectList(any())).thenReturn(List.of(generalRule, emergencyRule));
+
+        Method matchMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod("matchRule", String.class, String.class);
+        matchMethod.setAccessible(true);
+        TriageRule matchedRule = (TriageRule) matchMethod.invoke(service, "轻度头痛 4 小时", null);
+
+        Method recommendMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "recommendDeptId", TriageAssessmentCreateDTO.class, TriageRule.class);
+        recommendMethod.setAccessible(true);
+        Long recommendDeptId = (Long) recommendMethod.invoke(service, new TriageAssessmentCreateDTO(), matchedRule);
+
+        assertThat(matchedRule).isNotNull();
+        assertThat(matchedRule.getRuleCode()).isEqualTo("RULE_EMERG_MILD_HEADACHE");
+        assertThat(recommendDeptId).isEqualTo(1L);
+    }
+
+    @Test
+    void shouldPreferCardiologyRuleOverGeneralRuleWhenKeywordIsMoreSpecific() throws Exception {
+        TriageRule cardiologyRule = new TriageRule();
+        cardiologyRule.setId(78L);
+        cardiologyRule.setEnabled(1);
+        cardiologyRule.setRuleCode("RULE_CARD_INTERMITTENT_PALPITATION");
+        cardiologyRule.setSymptomKeyword("间断心悸,偶发心慌");
+        cardiologyRule.setTriageLevel(3);
+        cardiologyRule.setRecommendDeptId(5L);
+        cardiologyRule.setSpecialWeight(42);
+
+        TriageRule generalRule = new TriageRule();
+        generalRule.setId(37L);
+        generalRule.setEnabled(1);
+        generalRule.setRuleCode("RULE_GEN_PALPITATION");
+        generalRule.setSymptomKeyword("心悸,心慌");
+        generalRule.setTriageLevel(3);
+        generalRule.setRecommendDeptId(4L);
+        generalRule.setSpecialWeight(35);
+
+        when(triageRuleMapper.selectList(any())).thenReturn(List.of(generalRule, cardiologyRule));
+
+        Method matchMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod("matchRule", String.class, String.class);
+        matchMethod.setAccessible(true);
+        TriageRule matchedRule = (TriageRule) matchMethod.invoke(service, "间断心悸三天，活动后明显", null);
+
+        Method recommendMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "recommendDeptId", TriageAssessmentCreateDTO.class, TriageRule.class);
+        recommendMethod.setAccessible(true);
+        Long recommendDeptId = (Long) recommendMethod.invoke(service, new TriageAssessmentCreateDTO(), matchedRule);
+
+        assertThat(matchedRule).isNotNull();
+        assertThat(matchedRule.getRuleCode()).isEqualTo("RULE_CARD_INTERMITTENT_PALPITATION");
+        assertThat(recommendDeptId).isEqualTo(5L);
+    }
+
+    @Test
     void shouldFailWhenRecommendDeptCannotBeResolved() {
         TriageAssessmentCreateDTO dto = createDto(10L);
         dto.setSymptomTags("");
@@ -239,6 +311,67 @@ class TriageAssessmentServiceImplTest {
         assertThat(vo.getQueueRoomName()).isEqualTo("急诊 2 诊室");
     }
 
+    @Test
+    void shouldFallbackStableCoughToRespiratoryWhenNoRuleMatched() throws Exception {
+        when(clinicDeptMapper.selectList(any())).thenReturn(List.of(dept(6L, "呼吸内科", "RESPIRATORY")));
+
+        TriageAssessmentCreateDTO dto = new TriageAssessmentCreateDTO();
+        dto.setAge(38);
+        dto.setSymptomTags("反复咳嗽,晨起咳痰");
+
+        Method recommendMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "recommendDeptId", TriageAssessmentCreateDTO.class, TriageRule.class);
+        recommendMethod.setAccessible(true);
+        Long recommendDeptId = (Long) recommendMethod.invoke(service, dto, null);
+
+        assertThat(recommendDeptId).isEqualTo(6L);
+    }
+
+    @Test
+    void shouldIgnorePediatricsRuleForAdultWhenAgeTakesPriority() throws Exception {
+        TriageRule rule = pediatricsRule();
+        when(clinicDeptMapper.selectList(any())).thenReturn(List.of(dept(4L, "全科门诊", "GENERAL")));
+
+        TriageAssessmentCreateDTO dto = new TriageAssessmentCreateDTO();
+        dto.setAge(30);
+        dto.setChild(true);
+        dto.setSymptomTags("发热,乏力");
+
+        Method sanitizeMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "sanitizeMatchedRule", TriageAssessmentCreateDTO.class, TriageRule.class);
+        sanitizeMethod.setAccessible(true);
+        TriageRule sanitizedRule = (TriageRule) sanitizeMethod.invoke(service, dto, rule);
+
+        Method recommendMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "recommendDeptId", TriageAssessmentCreateDTO.class, TriageRule.class);
+        recommendMethod.setAccessible(true);
+        Long recommendDeptId = (Long) recommendMethod.invoke(service, dto, sanitizedRule);
+
+        assertThat(sanitizedRule).isNull();
+        assertThat(recommendDeptId).isEqualTo(4L);
+    }
+
+    @Test
+    void shouldKeepPediatricsRuleForChildWhenAgeIsBelowThreshold() throws Exception {
+        TriageRule rule = pediatricsRule();
+        TriageAssessmentCreateDTO dto = new TriageAssessmentCreateDTO();
+        dto.setAge(6);
+        dto.setChild(false);
+
+        Method sanitizeMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "sanitizeMatchedRule", TriageAssessmentCreateDTO.class, TriageRule.class);
+        sanitizeMethod.setAccessible(true);
+        TriageRule sanitizedRule = (TriageRule) sanitizeMethod.invoke(service, dto, rule);
+
+        Method recommendMethod = TriageAssessmentServiceImpl.class.getDeclaredMethod(
+                "recommendDeptId", TriageAssessmentCreateDTO.class, TriageRule.class);
+        recommendMethod.setAccessible(true);
+        Long recommendDeptId = (Long) recommendMethod.invoke(service, dto, sanitizedRule);
+
+        assertThat(sanitizedRule).isSameAs(rule);
+        assertThat(recommendDeptId).isEqualTo(2L);
+    }
+
     private TriageAssessmentCreateDTO createDto(Long visitId) {
         TriageAssessmentCreateDTO dto = new TriageAssessmentCreateDTO();
         dto.setVisitId(visitId);
@@ -260,6 +393,17 @@ class TriageAssessmentServiceImplTest {
         return rule;
     }
 
+    private TriageRule pediatricsRule() {
+        TriageRule rule = new TriageRule();
+        rule.setEnabled(1);
+        rule.setRuleCode("RULE_PED_FEVER");
+        rule.setRuleName("Pediatrics fever");
+        rule.setSymptomKeyword("发热");
+        rule.setTriageLevel(3);
+        rule.setRecommendDeptId(2L);
+        return rule;
+    }
+
     private VisitRecord visit(Long id, String status) {
         VisitRecord visitRecord = new VisitRecord();
         visitRecord.setId(id);
@@ -270,8 +414,13 @@ class TriageAssessmentServiceImplTest {
     }
 
     private ClinicDept dept(Long id, String name) {
+        return dept(id, name, null);
+    }
+
+    private ClinicDept dept(Long id, String name, String code) {
         ClinicDept dept = new ClinicDept();
         dept.setId(id);
+        dept.setDeptCode(code);
         dept.setDeptName(name);
         dept.setEnabled(1);
         return dept;

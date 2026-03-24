@@ -364,9 +364,68 @@ onMounted(() => {
 
 <style scoped>
 .patient-workstation-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  gap: 20px;
+}
+
+.patient-workstation-page :deep(.el-card) {
+  border: none;
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 22px 48px rgba(6, 95, 70, 0.08);
+}
+
+.patient-workstation-page :deep(.el-card__header) {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(247, 253, 250, 0.98), rgba(255, 255, 255, 0.82));
+}
+
+.patient-workstation-page :deep(.el-card__body) {
+  padding: 22px;
+}
+
+.patient-workstation-page :deep(.el-table) {
+  border-radius: 22px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.patient-workstation-page :deep(.el-table th.el-table__cell) {
+  background: rgba(236, 253, 245, 0.9);
+  color: var(--muted-color);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.patient-workstation-page :deep(.el-table td.el-table__cell) {
+  border-bottom-color: rgba(148, 163, 184, 0.12);
+}
+
+.patient-workstation-page :deep(.el-table__row:hover > td.el-table__cell) {
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.patient-workstation-page :deep(.el-table__row.current-row > td.el-table__cell) {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.patient-workstation-page :deep(.el-descriptions__body .el-descriptions__table) {
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.patient-workstation-page :deep(.el-descriptions__label.el-descriptions__cell) {
+  min-width: 118px;
+  background: rgba(236, 253, 245, 0.84);
+  color: var(--muted-color);
+  font-weight: 700;
+}
+
+.patient-workstation-page :deep(.el-descriptions__content.el-descriptions__cell) {
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-color);
 }
 
 .toolbar,
@@ -396,17 +455,30 @@ onMounted(() => {
 }
 
 .summary-card {
-  padding: 16px 18px;
-  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+  border-radius: 22px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
   border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 16px 34px rgba(6, 95, 70, 0.06);
+}
+
+.summary-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -24px -28px auto;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.14), transparent 72%);
 }
 
 .summary-card strong {
   display: block;
   margin: 10px 0 6px;
-  font-size: 24px;
-  line-height: 1.2;
+  font-size: 30px;
+  line-height: 1.08;
   color: var(--title-color);
 }
 
@@ -426,14 +498,13 @@ onMounted(() => {
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
-  gap: 16px;
+  gap: 18px;
 }
 
 .side-grid,
 .status-stack,
 .action-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 16px;
 }
 
@@ -442,15 +513,32 @@ onMounted(() => {
 }
 
 .action-item {
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.98);
+  position: relative;
+  overflow: hidden;
+  padding: 16px 18px 16px 22px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 1));
   border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.action-item::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #059669, #22d3ee);
 }
 
 .action-item strong,
 .action-item span {
   display: block;
+}
+
+.action-item strong {
+  color: var(--title-color);
 }
 
 .action-item span {
@@ -459,8 +547,23 @@ onMounted(() => {
 }
 
 @media (max-width: 1200px) {
-  .summary-grid,
   .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .patient-workstation-page :deep(.el-card__body),
+  .patient-workstation-page :deep(.el-card__header) {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 }

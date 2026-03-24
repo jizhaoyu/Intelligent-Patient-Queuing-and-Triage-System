@@ -4,6 +4,16 @@ export interface PatientQueueQueryDTO {
   phoneSuffix: string
 }
 
+export type PatientNextStepUrgency = 'LOW' | 'NORMAL' | 'HIGH' | 'IMMEDIATE'
+
+export interface PatientNextStep {
+  stage: string
+  title: string
+  action: string
+  locationHint?: string
+  urgency: PatientNextStepUrgency
+}
+
 export type PatientSelfQueueMode = 'EXISTING' | 'NEW'
 
 export interface PatientSelfQueueEnrollDTO {
@@ -22,6 +32,7 @@ export interface PatientSelfQueueEnrollDTO {
 }
 
 export interface PatientQueueView {
+  nextStep?: PatientNextStep
   patientName: string
   patientNo: string
   patientId: number
@@ -40,7 +51,9 @@ export interface PatientQueueView {
   doctorName?: string
   rank?: number
   waitingCount?: number
+  roomWaitingCount?: number
   estimatedWaitMinutes?: number
+  roomEstimatedWaitMinutes?: number
   waitedMinutes?: number
   triageLevel?: number
   aiSuggestedLevel?: number

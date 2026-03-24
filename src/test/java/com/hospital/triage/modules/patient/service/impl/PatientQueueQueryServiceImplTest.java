@@ -69,7 +69,9 @@ class PatientQueueQueryServiceImplTest {
     void shouldEchoQueueStateConsistently(String status,
                                           boolean hasActiveQueue,
                                           String expectedStatusText,
-                                          String expectedMessage) {
+                                          String expectedMessage,
+                                          String expectedNextStepTitle,
+                                          String expectedUrgency) {
         mockBaseContext();
         QueueTicketVO ticket = queueTicket(status);
         when(queueDispatchService.getLatestTicketByVisitId(11L)).thenReturn(ticket);
@@ -80,6 +82,10 @@ class PatientQueueQueryServiceImplTest {
         assertThat(result.isHasActiveQueue()).isEqualTo(hasActiveQueue);
         assertThat(result.getQueueStatusText()).isEqualTo(expectedStatusText);
         assertThat(result.getQueueMessage()).isEqualTo(expectedMessage);
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getStage()).isEqualTo(status);
+        assertThat(result.getNextStep().getTitle()).isEqualTo(expectedNextStepTitle);
+        assertThat(result.getNextStep().getUrgency()).isEqualTo(expectedUrgency);
         assertThat(result.getDeptName()).isEqualTo("急诊科");
         assertThat(result.getRoomName()).isEqualTo("急诊 2 诊室");
         verify(queueDispatchService, never()).rank(any());
@@ -101,7 +107,14 @@ class PatientQueueQueryServiceImplTest {
         assertThat(result.getQueueMessage()).isEqualTo("您已完成取号并进入排队，请在候诊区耐心等待，留意现场叫号信息");
         assertThat(result.getRank()).isEqualTo(2L);
         assertThat(result.getWaitingCount()).isEqualTo(4L);
+        assertThat(result.getRoomWaitingCount()).isEqualTo(1L);
         assertThat(result.getEstimatedWaitMinutes()).isEqualTo(20L);
+        assertThat(result.getRoomEstimatedWaitMinutes()).isEqualTo(5L);
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getTitle()).isEqualTo("即将轮到您");
+        assertThat(result.getNextStep().getAction()).isEqualTo("请立即前往诊室门口候诊，留意现场叫号与屏幕提示。");
+        assertThat(result.getNextStep().getLocationHint()).isEqualTo("急诊 2 诊室门口候诊区");
+        assertThat(result.getNextStep().getUrgency()).isEqualTo("HIGH");
     }
 
     @Test
@@ -119,7 +132,14 @@ class PatientQueueQueryServiceImplTest {
         assertThat(result.getQueueMessage()).isEqualTo("即将轮到您，请在当前诊室门口候诊，留意现场叫号与屏幕提示");
         assertThat(result.getRank()).isEqualTo(2L);
         assertThat(result.getWaitingCount()).isEqualTo(4L);
+        assertThat(result.getRoomWaitingCount()).isEqualTo(0L);
         assertThat(result.getEstimatedWaitMinutes()).isEqualTo(20L);
+        assertThat(result.getRoomEstimatedWaitMinutes()).isEqualTo(0L);
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getTitle()).isEqualTo("即将轮到您");
+        assertThat(result.getNextStep().getAction()).isEqualTo("请立即前往诊室门口候诊，留意现场叫号与屏幕提示。");
+        assertThat(result.getNextStep().getLocationHint()).isEqualTo("急诊 2 诊室门口候诊区");
+        assertThat(result.getNextStep().getUrgency()).isEqualTo("HIGH");
     }
 
     @Test
@@ -134,6 +154,52 @@ class PatientQueueQueryServiceImplTest {
         assertThat(result.getQueueStatusText()).isEqualTo("暂无排队票据");
         assertThat(result.getQueueMessage()).isEqualTo("您已完成分诊，当前暂未生成排队票据，请留意护士台通知");
         assertThat(result.getVisitStatus()).isEqualTo("TRIAGED");
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getStage()).isEqualTo("TRIAGED");
+        assertThat(result.getNextStep().getTitle()).isEqualTo("等待系统入队");
+        assertThat(result.getNextStep().getAction()).isEqualTo("您已完成分诊，正在等待系统入队或人工安排，请留意护士台通知。");
+        assertThat(result.getNextStep().getLocationHint()).isEqualTo("急诊科护士台");
+        assertThat(result.getNextStep().getUrgency()).isEqualTo("NORMAL");
+    }
+
+    @Test
+    void shouldReturnNextStepForRegisteredVisitWithoutTicket() {
+        when(patientInfoMapper.selectOne(any())).thenReturn(patient("REGISTERED"));
+        when(visitRecordMapper.selectById(11L)).thenReturn(visit("REGISTERED", 2L));
+        when(clinicDeptMapper.selectById(1L)).thenReturn(dept());
+        when(clinicRoomMapper.selectById(2L)).thenReturn(room());
+        when(queueDispatchService.getLatestTicketByVisitId(11L)).thenReturn(null);
+
+        PatientQueueViewVO result = service.query(queryDTO());
+
+        assertThat(result.getQueueStatus()).isEqualTo("NONE");
+        assertThat(result.getVisitStatus()).isEqualTo("REGISTERED");
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getStage()).isEqualTo("REGISTERED");
+        assertThat(result.getNextStep().getTitle()).isEqualTo("请先完成到院报到");
+        assertThat(result.getNextStep().getAction()).isEqualTo("请前往导诊台或报到点完成报到，再查看排队进度。");
+        assertThat(result.getNextStep().getLocationHint()).isEqualTo("导诊台 / 报到点");
+        assertThat(result.getNextStep().getUrgency()).isEqualTo("HIGH");
+    }
+
+    @Test
+    void shouldFallbackToDeptLocationWhenRoomUnavailable() {
+        when(patientInfoMapper.selectOne(any())).thenReturn(patient());
+        when(visitRecordMapper.selectById(11L)).thenReturn(visit("TRIAGED", null));
+        when(clinicDeptMapper.selectById(1L)).thenReturn(dept());
+        when(queueDispatchService.getLatestTicketByVisitId(11L)).thenReturn(queueTicketWithoutRoom("WAITING"));
+        when(queueDispatchService.rank("T-20260320-0001")).thenReturn(rank(5L, 8L, 18L));
+
+        PatientQueueViewVO result = service.query(queryDTO());
+
+        assertThat(result.getQueueStatus()).isEqualTo("WAITING");
+        assertThat(result.getNextStep()).isNotNull();
+        assertThat(result.getNextStep().getTitle()).isEqualTo("请在候诊区等待");
+        assertThat(result.getNextStep().getLocationHint()).isEqualTo("急诊科候诊区");
+        assertThat(result.getNextStep().getUrgency()).isEqualTo("NORMAL");
+        assertThat(result.getRoomWaitingCount()).isNull();
+        assertThat(result.getRoomEstimatedWaitMinutes()).isNull();
+        verify(queueDispatchService, never()).roomRank(any());
     }
 
     @Test
@@ -202,10 +268,10 @@ class PatientQueueQueryServiceImplTest {
 
     private static Stream<org.junit.jupiter.params.provider.Arguments> queueStatusCases() {
         return Stream.of(
-                org.junit.jupiter.params.provider.Arguments.of("CALLING", true, "请立即前往诊室", "请立即前往诊室报到，避免错过本次叫号"),
-                org.junit.jupiter.params.provider.Arguments.of("MISSED", true, "已过号", "已过号，请尽快联系护士台处理"),
-                org.junit.jupiter.params.provider.Arguments.of("COMPLETED", false, "本次就诊已完成", "本次就诊流程已完成，如需复诊请咨询工作人员"),
-                org.junit.jupiter.params.provider.Arguments.of("CANCELLED", false, "排队已取消", "当前排队已取消，请咨询导诊台")
+                org.junit.jupiter.params.provider.Arguments.of("CALLING", true, "请立即前往诊室", "请立即前往诊室报到，避免错过本次叫号", "请立刻前往诊室", "IMMEDIATE"),
+                org.junit.jupiter.params.provider.Arguments.of("MISSED", true, "已过号", "已过号，请尽快联系护士台处理", "请尽快联系现场工作人员", "HIGH"),
+                org.junit.jupiter.params.provider.Arguments.of("COMPLETED", false, "本次就诊已完成", "本次就诊流程已完成，如需复诊请咨询工作人员", "本次接诊已完成", "LOW"),
+                org.junit.jupiter.params.provider.Arguments.of("CANCELLED", false, "排队已取消", "当前排队已取消，请咨询导诊台", "请咨询导诊台", "HIGH")
         );
     }
 
@@ -217,24 +283,32 @@ class PatientQueueQueryServiceImplTest {
     }
 
     private PatientInfo patient() {
+        return patient("TRIAGED");
+    }
+
+    private PatientInfo patient(String currentStatus) {
         PatientInfo patientInfo = new PatientInfo();
         patientInfo.setId(7L);
         patientInfo.setPatientNo("P0000001234");
         patientInfo.setPatientName("张三");
         patientInfo.setPhone("13800001234");
         patientInfo.setCurrentVisitId(11L);
-        patientInfo.setCurrentStatus("TRIAGED");
+        patientInfo.setCurrentStatus(currentStatus);
         return patientInfo;
     }
 
     private VisitRecord visit() {
+        return visit("TRIAGED", 2L);
+    }
+
+    private VisitRecord visit(String status, Long currentRoomId) {
         VisitRecord visitRecord = new VisitRecord();
         visitRecord.setId(11L);
         visitRecord.setPatientId(7L);
         visitRecord.setVisitNo("V202603200001");
-        visitRecord.setStatus("TRIAGED");
+        visitRecord.setStatus(status);
         visitRecord.setCurrentDeptId(1L);
-        visitRecord.setCurrentRoomId(2L);
+        visitRecord.setCurrentRoomId(currentRoomId);
         return visitRecord;
     }
 
@@ -253,6 +327,12 @@ class PatientQueueQueryServiceImplTest {
         ticket.setWaitedMinutes(8L);
         ticket.setEnqueueTime(LocalDateTime.now().minusMinutes(8));
         ticket.setCallTime(LocalDateTime.now().minusMinutes(2));
+        return ticket;
+    }
+
+    private QueueTicketVO queueTicketWithoutRoom(String status) {
+        QueueTicketVO ticket = queueTicket(status);
+        ticket.setRoomId(null);
         return ticket;
     }
 

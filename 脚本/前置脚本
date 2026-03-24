@@ -1,0 +1,157 @@
+function pick(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function pad(num, len) {
+    return String(num).padStart(len || 2, '0');
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomBirthDate() {
+    const year = randomInt(1980, 2004);
+    const month = randomInt(1, 12);
+    const maxDay = new Date(year, month, 0).getDate();
+    const day = randomInt(1, maxDay);
+    return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+function randomName() {
+    const lastNames = ['王', '李', '张', '刘', '陈', '杨', '赵', '黄', '周', '吴', '徐', '孙', '胡', '朱', '高'];
+    const givenA = ['建', '志', '晓', '文', '思', '海', '明', '佳', '宇', '晨', '天', '子', '安', '景', '嘉'];
+    const givenB = ['国', '强', '远', '峰', '彤', '杰', '怡', '曦', '宁', '轩', '博', '诚', '涵', '雨', '林'];
+    return pick(lastNames) + pick(givenA) + pick(givenB);
+}
+
+function buildPhone(iteration) {
+    const seed = `${Date.now()}`.slice(-6) + pad(iteration % 100, 2);
+    return '138' + seed.slice(-8);
+}
+
+function calcIdChecksum(base17) {
+    const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+    const codes = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
+    let sum = 0;
+    for (let i = 0; i < 17; i++) {
+        sum += Number(base17.charAt(i)) * weights[i];
+    }
+    return codes[sum % 11];
+}
+
+function buildIdCard(birthDate, iteration, gender) {
+    const areaCode = '110101';
+    const birth = birthDate.replace(/-/g, '');
+    let seq = 100 + (iteration % 899);
+
+    if (gender === 'MALE' && seq % 2 === 0) {
+        seq += 1;
+    }
+    if (gender === 'FEMALE' && seq % 2 === 1) {
+        seq += 1;
+    }
+    if (seq > 999) {
+        seq -= 2;
+    }
+
+    const orderCode = pad(seq, 3);
+    const base17 = areaCode + birth + orderCode;
+    return base17 + calcIdChecksum(base17);
+}
+
+const lowSeverityRuleSamples = [
+    { ruleCode: 'RULE_EMERG_PERSISTENT_PALPITATION', chiefComplaint: '持续心悸', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_PERSISTENT_PALPITATION', chiefComplaint: '阵发性心慌', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DIZZINESS_NAUSEA', chiefComplaint: '头晕伴恶心', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DIZZINESS_NAUSEA', chiefComplaint: '眩晕伴恶心', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_PERSISTENT_HEADACHE', chiefComplaint: '持续头痛伴恶心', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_PERSISTENT_HEADACHE', chiefComplaint: '偏头痛发作', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MODERATE_ABDOMINAL_DISCOMFORT', chiefComplaint: '腹部隐痛', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MODERATE_ABDOMINAL_DISCOMFORT', chiefComplaint: '中上腹不适', triageLevel: 3, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_UPPER_RESPIRATORY', chiefComplaint: '鼻塞流涕', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_UPPER_RESPIRATORY', chiefComplaint: '咽干鼻塞', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_THROAT_DISCOMFORT', chiefComplaint: '轻度咽痛', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_THROAT_DISCOMFORT', chiefComplaint: '咽部异物感', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_HEADACHE', chiefComplaint: '轻度头痛', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_HEADACHE', chiefComplaint: '头胀不适', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_DIZZINESS', chiefComplaint: '轻度头晕', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_DIZZINESS', chiefComplaint: '短暂眩晕', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_GASTRO', chiefComplaint: '轻度恶心', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MILD_GASTRO', chiefComplaint: '偶发腹泻', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MUSCLE_PAIN', chiefComplaint: '肌肉酸痛', triageLevel: 4, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_MUSCLE_PAIN', chiefComplaint: '四肢酸痛', triageLevel: 4, deptId: 1, deptKeyword: '急诊' }
+];
+
+const emergencyRuleSamples = [
+    { ruleCode: 'RULE_EMERG_CHEST_PAIN', chiefComplaint: '胸痛', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DYSPNEA', chiefComplaint: '呼吸困难', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_UNCONSCIOUS', chiefComplaint: '意识不清', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_COMA', chiefComplaint: '昏迷', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_CONVULSION', chiefComplaint: '抽搐', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SHOCK', chiefComplaint: '休克', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HEMORRHAGE', chiefComplaint: '大出血', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_STROKE', chiefComplaint: '偏瘫', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HEMATEMESIS', chiefComplaint: '呕血', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HEMOPTYSIS', chiefComplaint: '咯血', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_CHEST_TIGHTNESS', chiefComplaint: '胸闷', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_ACUTE_DYSPNEA', chiefComplaint: '呼吸急促', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SYNCOPE', chiefComplaint: '晕厥', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_CONFUSION', chiefComplaint: '意识模糊', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HEMIPARESIS', chiefComplaint: '单侧肢体无力', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_GI_BLEED', chiefComplaint: '黑便', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_ASTHMA_ATTACK', chiefComplaint: '喘憋', triageLevel: 1, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_TRAUMA', chiefComplaint: '外伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_FRACTURE', chiefComplaint: '骨折', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HEAD_TRAUMA', chiefComplaint: '头部外伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_BURN', chiefComplaint: '烧伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_POISONING', chiefComplaint: '中毒', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_ALLERGY', chiefComplaint: '严重过敏', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SEVERE_ABDOMINAL_PAIN', chiefComplaint: '剧烈腹痛', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DEHYDRATION', chiefComplaint: '脱水', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_RIGHT_LOWER_ABDOMINAL_PAIN', chiefComplaint: '右下腹痛', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_EXPLOSIVE_HEADACHE', chiefComplaint: '剧烈头痛', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_TRAFFIC_ACCIDENT', chiefComplaint: '车祸伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_KNIFE_WOUND', chiefComplaint: '刀伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_FALL_INJURY', chiefComplaint: '摔伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DISLOCATION', chiefComplaint: '脱位', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SCALD', chiefComplaint: '烫伤', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_DRUG_POISONING', chiefComplaint: '药物中毒', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_HIGH_FEVER', chiefComplaint: '高热', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SEVERE_PALPITATION', chiefComplaint: '心悸胸闷', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_FREQUENT_VOMITING', chiefComplaint: '频繁呕吐', triageLevel: 2, deptId: 1, deptKeyword: '急诊' },
+    { ruleCode: 'RULE_EMERG_SEVERE_DIARRHEA', chiefComplaint: '腹泻脱水', triageLevel: 2, deptId: 1, deptKeyword: '急诊' }
+];
+
+const allergyOptions = ['无', '青霉素过敏', '头孢过敏', '无特殊过敏史'];
+const specialTagOptions = ['', '', '', '需轮椅协助', '行动不便'];
+
+const iteration = Number(pm.info.iteration || 0);
+const patientName = randomName();
+const gender = Math.random() > 0.5 ? 'MALE' : 'FEMALE';
+const birthDate = randomBirthDate();
+const phone = buildPhone(iteration);
+const idCard = buildIdCard(birthDate, iteration, gender);
+const sampledRule = Math.random() < 0.7
+    ? pick(lowSeverityRuleSamples)
+    : pick(emergencyRuleSamples);
+const chiefComplaint = sampledRule.chiefComplaint;
+const allergyHistory = pick(allergyOptions);
+const specialTags = pick(specialTagOptions);
+
+pm.variables.set('patientMode', 'NEW');
+pm.variables.set('patientName', patientName);
+pm.variables.set('phone', phone);
+pm.variables.set('gender', gender);
+pm.variables.set('birthDate', birthDate);
+pm.variables.set('deptId', String(sampledRule.deptId));
+pm.variables.set('chiefComplaint', chiefComplaint);
+pm.variables.set('idCard', idCard);
+pm.variables.set('allergyHistory', allergyHistory);
+pm.variables.set('specialTags', specialTags);
+pm.variables.set('sampleRuleCode', sampledRule.ruleCode);
+pm.variables.set('expectedDeptId', String(sampledRule.deptId));
+pm.variables.set('expectedDeptKeyword', sampledRule.deptKeyword);
+pm.variables.set('expectedRoomKeyword', sampledRule.deptKeyword);
+pm.variables.set('expectedTriageLevel', String(sampledRule.triageLevel));
+pm.variables.set('expectedTriageBucket', sampledRule.triageLevel <= 2 ? 'LEVEL_1_2' : 'LEVEL_3_4');

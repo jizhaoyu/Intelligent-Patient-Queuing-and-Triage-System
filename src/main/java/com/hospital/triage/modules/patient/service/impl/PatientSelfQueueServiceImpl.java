@@ -2,6 +2,7 @@ package com.hospital.triage.modules.patient.service.impl;
 
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.hospital.triage.common.enums.ErrorCodeEnum;
 import com.hospital.triage.common.enums.QueueStatusEnum;
 import com.hospital.triage.common.enums.VisitStatusEnum;
@@ -50,6 +51,7 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
     private static final String NEW_PATIENT_DUPLICATED_MESSAGE = "检测到同名同手机号的多条档案，请前往导诊台核验";
     private static final String EXISTING_MODE = "EXISTING";
     private static final String NEW_MODE = "NEW";
+    private static final int PRIORITY_REVISIT_BONUS = 120;
 
     private final PatientInfoMapper patientInfoMapper;
     private final VisitRecordMapper visitRecordMapper;
@@ -78,6 +80,9 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
         this.patientTriageAiService = patientTriageAiService;
     }
 
+    /**
+     *患者自助挂号
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PatientQueueViewVO enroll(PatientSelfQueueEnrollDTO dto) {
@@ -104,6 +109,7 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
             queryDTO.setPhoneSuffix(phoneSuffix);
         }
 
+        boolean priorityRevisitPending = hasPriorityRevisitPending(patientInfo);
         PatientQueueViewVO currentView = patientQueueQueryService.query(queryDTO);
         if (currentView.isHasActiveQueue()
                 && isActiveQueueStatus(currentView.getQueueStatus())) {
@@ -111,9 +117,10 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
         }
 
         VisitRecord visitRecord = resolveOrCreateVisit(patientInfo, dto, currentView);
-        PatientTriageAiRequest aiRequest = buildSelfQueueAiRequest(patientInfo, visitRecord, dto, dept);
+        boolean revisit = hasRevisitDemand(dto.getSpecialTags(), priorityRevisitPending);
+        PatientTriageAiRequest aiRequest = buildSelfQueueAiRequest(patientInfo, visitRecord, dto, dept, revisit);
         PatientTriageAiResult aiResult = patientTriageAiService.analyze(aiRequest);
-        TriageAssessment assessment = buildKioskAssessment(patientInfo, visitRecord, dto, dept, aiResult);
+        TriageAssessment assessment = buildKioskAssessment(patientInfo, visitRecord, dto, dept, aiResult, revisit, priorityRevisitPending);
         triageAssessmentMapper.insert(assessment);
         Long aiAuditId = patientTriageAiService.saveAudit(visitRecord.getId(), assessment.getId(),
                 aiRequest, aiResult, assessment.getTriageLevel(), assessment.getPriorityScore(), isAiAdopted(assessment, aiResult));
@@ -123,6 +130,9 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
         }
 
         queueDispatchService.enqueueFromKiosk(visitRecord.getId(), assessment.getId());
+        if (priorityRevisitPending) {
+            consumePriorityRevisitPrivilege(patientInfo.getId());
+        }
 
         return patientQueueQueryService.query(queryDTO);
     }
@@ -337,7 +347,9 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
                                                   VisitRecord visitRecord,
                                                   PatientSelfQueueEnrollDTO dto,
                                                   ClinicDept dept,
-                                                  PatientTriageAiResult aiResult) {
+                                                  PatientTriageAiResult aiResult,
+                                                  boolean revisit,
+                                                  boolean priorityRevisitPending) {
         TriageAssessment assessment = new TriageAssessment();
         assessment.setVisitId(visitRecord.getId());
         String symptom = StringUtils.hasText(dto.getChiefComplaint())
@@ -355,12 +367,15 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
         assessment.setGender(patientInfo.getGender());
         assessment.setDisabled(containsAny(dto.getSpecialTags(), "轮椅", "残障", "行动不便"));
         assessment.setPregnant(containsAny(dto.getSpecialTags(), "孕", "孕妇"));
-        assessment.setRevisit(containsAny(dto.getSpecialTags(), "复诊", "复查"));
-        assessment.setTriageLevel(resolveAiLevel(aiResult));
+        assessment.setRevisit(revisit);
+        Integer triageLevel = resolveAiLevel(aiResult);
+        assessment.setTriageLevel(triageLevel);
         assessment.setRecommendDeptId(resolveAiDeptId(aiResult, dept.getId()));
-        assessment.setPriorityScore(resolveAiPriorityScore(aiResult));
+        int basePriorityScore = resolveAiPriorityScore(aiResult);
+        int priorityRevisitBonus = resolvePriorityRevisitBonus(basePriorityScore, triageLevel, priorityRevisitPending);
+        assessment.setPriorityScore(basePriorityScore + priorityRevisitBonus);
         assessment.setFastTrack(resolveAiFastTrack(aiResult));
-        assessment.setManualAdjustScore(0);
+        assessment.setManualAdjustScore(priorityRevisitBonus);
         if (aiResult != null) {
             assessment.setAiSuggestedLevel(aiResult.getSuggestedLevel());
             assessment.setAiSuggestedDeptId(aiResult.getSuggestedDeptId());
@@ -382,7 +397,8 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
     private PatientTriageAiRequest buildSelfQueueAiRequest(PatientInfo patientInfo,
                                                            VisitRecord visitRecord,
                                                            PatientSelfQueueEnrollDTO dto,
-                                                           ClinicDept dept) {
+                                                           ClinicDept dept,
+                                                           boolean revisit) {
         Integer age = null;
         if (patientInfo.getBirthDate() != null) {
             age = Math.max(0, Period.between(patientInfo.getBirthDate(), LocalDate.now()).getYears());
@@ -399,13 +415,47 @@ public class PatientSelfQueueServiceImpl implements PatientSelfQueueService {
                 .pregnant(containsAny(dto.getSpecialTags(), "孕", "孕妇"))
                 .child(age != null && age < 14)
                 .disabled(containsAny(dto.getSpecialTags(), "轮椅", "残障", "行动不便"))
-                .revisit(containsAny(dto.getSpecialTags(), "复诊", "复查"))
+                .revisit(revisit)
                 .selectedDeptId(dto.getDeptId())
                 .selectedDeptName(dept.getDeptName())
                 .currentTriageLevel(4)
                 .currentRecommendDeptId(dept.getId())
                 .currentRecommendDeptName(dept.getDeptName())
                 .build();
+    }
+
+    private boolean hasPriorityRevisitPending(PatientInfo patientInfo) {
+        return patientInfo != null && Boolean.TRUE.equals(patientInfo.getPriorityRevisitPending());
+    }
+
+    private boolean hasRevisitDemand(String specialTags, boolean priorityRevisitPending) {
+        return priorityRevisitPending || containsAny(specialTags, "复诊", "复查");
+    }
+
+    private int resolvePriorityRevisitBonus(int basePriorityScore, Integer triageLevel, boolean priorityRevisitPending) {
+        if (!priorityRevisitPending) {
+            return 0;
+        }
+        if (triageLevel != null && triageLevel > 1) {
+            int levelOneFloor = 1000;
+            if (basePriorityScore >= levelOneFloor) {
+                return 0;
+            }
+            return Math.min(PRIORITY_REVISIT_BONUS, levelOneFloor - 1 - Math.max(basePriorityScore, 0));
+        }
+        return PRIORITY_REVISIT_BONUS;
+    }
+
+    private void consumePriorityRevisitPrivilege(Long patientId) {
+        if (patientId == null) {
+            return;
+        }
+        patientInfoMapper.update(null, new UpdateWrapper<PatientInfo>()
+                .eq("id", patientId)
+                .eq("priority_revisit_pending", 1)
+                .set("priority_revisit_pending", 0)
+                .set("priority_revisit_granted_time", null)
+                .set("priority_revisit_granted_by", null));
     }
 
     private boolean isAiAdopted(TriageAssessment assessment, PatientTriageAiResult aiResult) {

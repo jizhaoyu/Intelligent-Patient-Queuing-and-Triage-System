@@ -43,7 +43,7 @@
             >
               登记到诊
             </el-button>
-            <el-button type="primary" @click="goAssessment">
+            <el-button v-if="canGoAssessment" type="primary" @click="goAssessment">
               去分诊评估
             </el-button>
           </div>
@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -68,10 +68,15 @@ const router = useRouter()
 const loading = ref(false)
 const arriving = ref(false)
 const visit = ref<Visit | null>(null)
+const surfaceBasePath = computed(() => (route.path.startsWith('/admin') ? '/admin' : '/workstation'))
+const canGoAssessment = computed(() => surfaceBasePath.value !== '/admin')
 
 function goAssessment() {
+  if (!canGoAssessment.value) {
+    return
+  }
   void router.push({
-    path: '/workstation/triage/assessments/new',
+    path: `${surfaceBasePath.value}/triage/assessments/new`,
     query: { visitId: String(route.params.id || '') }
   })
 }

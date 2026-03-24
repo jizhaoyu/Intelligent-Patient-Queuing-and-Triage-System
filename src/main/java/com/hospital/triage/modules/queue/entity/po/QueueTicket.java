@@ -26,6 +26,9 @@ public class QueueTicket extends BaseEntity {
     private String sourceType;
     private String sourceRemark;
     private String lastAdjustReason;
+    private Integer consultationLocked;
+    private LocalDateTime consultationLockedTime;
+    private String roomAssignmentStatus;
     private LocalDateTime enqueueTime;
     private LocalDateTime callTime;
     private LocalDateTime completeTime;

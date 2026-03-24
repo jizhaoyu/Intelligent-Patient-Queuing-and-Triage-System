@@ -18,6 +18,7 @@ import com.hospital.triage.modules.triage.service.PatientTriageAiService;
 import com.hospital.triage.modules.triage.service.TriageAssessmentService;
 import com.hospital.triage.modules.triage.service.model.PatientTriageAiRequest;
 import com.hospital.triage.modules.triage.service.model.PatientTriageAiResult;
+import com.hospital.triage.modules.triage.service.support.DeptRoutingSupport;
 import com.hospital.triage.modules.triage.service.support.TriageRuleMatchSupport;
 import com.hospital.triage.modules.visit.entity.po.VisitRecord;
 import com.hospital.triage.modules.visit.mapper.VisitRecordMapper;
@@ -66,7 +67,7 @@ public class TriageAssessmentServiceImpl implements TriageAssessmentService {
     public TriageAssessmentVO create(TriageAssessmentCreateDTO dto) {
         validateCreateRequest(dto);
         VisitRecord visitRecord = requireAssessableVisit(dto.getVisitId(), false);
-        TriageRule rule = matchRule(dto.getChiefComplaint(), dto.getSymptomTags());
+        TriageRule rule = sanitizeMatchedRule(dto, matchRule(dto.getChiefComplaint(), dto.getSymptomTags()));
         Integer triageLevel = determineLevel(dto, rule);
         Long recommendDeptId = recommendDeptId(dto, rule);
         validateRecommendDeptId(recommendDeptId);
@@ -112,7 +113,7 @@ public class TriageAssessmentServiceImpl implements TriageAssessmentService {
         }
         validateReassessRequest(dto, assessment);
         VisitRecord visitRecord = requireAssessableVisit(assessment.getVisitId(), true);
-        TriageRule rule = matchRule(dto.getChiefComplaint(), dto.getSymptomTags());
+        TriageRule rule = sanitizeMatchedRule(dto, matchRule(dto.getChiefComplaint(), dto.getSymptomTags()));
         Integer triageLevel = determineLevel(dto, rule);
         Long recommendDeptId = recommendDeptId(dto, rule);
         validateRecommendDeptId(recommendDeptId);
@@ -195,17 +196,41 @@ public class TriageAssessmentServiceImpl implements TriageAssessmentService {
         if (rule != null && rule.getRecommendDeptId() != null) {
             return rule.getRecommendDeptId();
         }
-        String symptoms = dto.getSymptomTags() == null ? "" : dto.getSymptomTags().toLowerCase(Locale.ROOT);
-        if (symptoms.contains("胸") || symptoms.contains("heart") || symptoms.contains("呼吸")) {
-            return findDeptIdByKeyword("急诊");
+        return findDeptIdByCode(DeptRoutingSupport.recommendDeptCode(
+                dto == null ? null : dto.getAge(),
+                dto == null ? null : dto.getChild(),
+                dto == null ? null : dto.getPregnant(),
+                dto == null ? null : dto.getChiefComplaint(),
+                dto == null ? null : dto.getSymptomTags()));
+    }
+
+    private TriageRule sanitizeMatchedRule(TriageAssessmentCreateDTO dto, TriageRule rule) {
+        if (rule == null || isPediatricPatient(dto) || !isPediatricsRule(rule)) {
+            return rule;
         }
-        if (symptoms.contains("儿") || Boolean.TRUE.equals(dto.getChild())) {
-            return findDeptIdByKeyword("儿科");
+        return null;
+    }
+
+    private boolean isPediatricPatient(TriageAssessmentCreateDTO dto) {
+        if (dto == null) {
+            return false;
         }
-        if (symptoms.contains("孕") || Boolean.TRUE.equals(dto.getPregnant())) {
-            return findDeptIdByKeyword("妇产");
+        return DeptRoutingSupport.isPediatricPatient(dto.getAge(), dto.getChild());
+    }
+
+    private boolean isPediatricsRule(TriageRule rule) {
+        if (rule == null) {
+            return false;
         }
-        return findDeptIdByKeyword("全科");
+        if (StringUtils.hasText(rule.getRuleCode())
+                && rule.getRuleCode().trim().toUpperCase(Locale.ROOT).startsWith("RULE_PED")) {
+            return true;
+        }
+        return isPediatricsDeptName(resolveDeptName(rule.getRecommendDeptId()));
+    }
+
+    private boolean isPediatricsDeptName(String deptName) {
+        return StringUtils.hasText(deptName) && deptName.contains("儿科");
     }
 
     private boolean isFastTrack(TriageAssessmentCreateDTO dto, TriageRule rule) {
@@ -224,9 +249,12 @@ public class TriageAssessmentServiceImpl implements TriageAssessmentService {
                 symptomTags);
     }
 
-    private Long findDeptIdByKeyword(String keyword) {
+    private Long findDeptIdByCode(String deptCode) {
+        if (!StringUtils.hasText(deptCode)) {
+            return null;
+        }
         List<ClinicDept> depts = clinicDeptMapper.selectList(new LambdaQueryWrapper<ClinicDept>()
-                .like(ClinicDept::getDeptName, keyword)
+                .eq(ClinicDept::getDeptCode, deptCode)
                 .eq(ClinicDept::getEnabled, 1)
                 .last("limit 1"));
         if (depts.isEmpty()) {

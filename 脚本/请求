@@ -1,0 +1,14 @@
+http://localhost:8080/api/patient-queue/enroll
+
+{
+    "patientMode": "{{patientMode}}",
+    "patientName": "{{patientName}}",
+    "phone": "{{phone}}",
+    "gender": "{{gender}}",
+    "birthDate": "{{birthDate}}",
+    "deptId": {{deptId}},
+    "chiefComplaint": "{{chiefComplaint}}",
+    "idCard": "{{idCard}}",
+    "allergyHistory": "{{allergyHistory}}",
+    "specialTags": "{{specialTags}}"
+}

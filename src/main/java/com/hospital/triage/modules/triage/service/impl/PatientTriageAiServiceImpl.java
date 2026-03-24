@@ -12,6 +12,7 @@ import com.hospital.triage.modules.triage.mapper.TriageRuleMapper;
 import com.hospital.triage.modules.triage.service.PatientTriageAiService;
 import com.hospital.triage.modules.triage.service.model.PatientTriageAiRequest;
 import com.hospital.triage.modules.triage.service.model.PatientTriageAiResult;
+import com.hospital.triage.modules.triage.service.support.DeptRoutingSupport;
 import com.hospital.triage.modules.triage.service.support.TriageRuleMatchSupport;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -34,7 +35,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class PatientTriageAiServiceImpl implements PatientTriageAiService {
-
     private static final String SOURCE_RULE_FALLBACK = "RULE_FALLBACK";
     private static final String SOURCE_MOONSHOT = "MOONSHOT";
 
@@ -60,10 +60,12 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
     @Override
     public PatientTriageAiResult analyze(PatientTriageAiRequest request) {
         List<TriageRule> enabledRules = loadEnabledRules();
-        List<TriageRuleMatchSupport.MatchedRule> matchedRules = TriageRuleMatchSupport.matchRules(
-                enabledRules,
-                request == null ? null : request.getChiefComplaint(),
-                request == null ? null : request.getSymptomTags());
+        List<TriageRuleMatchSupport.MatchedRule> matchedRules = filterMatchedRulesByAge(
+                request,
+                TriageRuleMatchSupport.matchRules(
+                        enabledRules,
+                        request == null ? null : request.getChiefComplaint(),
+                        request == null ? null : request.getSymptomTags()));
         PatientTriageAiResult fallback = buildRuleFallback(request, matchedRules, null, null, null);
         if (!properties.isEnabled()) {
             return fallback;
@@ -262,6 +264,10 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
         if (!StringUtils.hasText(deptName) && deptId != null) {
             deptName = resolveDeptName(deptId);
         }
+        if (!isPediatricPatient(request) && isPediatricsDept(deptId, deptName)) {
+            deptId = null;
+            deptName = null;
+        }
 
         level = level == null ? fallback.getSuggestedLevel() : Math.max(1, Math.min(level, 4));
         deptId = deptId == null ? fallback.getSuggestedDeptId() : deptId;
@@ -368,31 +374,24 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
     }
 
     private Long inferRuleDeptId(PatientTriageAiRequest request, TriageRule matchedRule) {
-        if (matchedRule != null && matchedRule.getRecommendDeptId() != null) {
+        if (matchedRule != null
+                && matchedRule.getRecommendDeptId() != null
+                && !shouldSkipPediatricsRule(request, matchedRule)) {
             return matchedRule.getRecommendDeptId();
         }
         return inferRuleDeptId(request);
     }
 
     private Long inferRuleDeptId(PatientTriageAiRequest request) {
-        String symptoms = (safe(request.getSymptomTags()) + " " + safe(request.getChiefComplaint())).toLowerCase(Locale.ROOT);
-        if (symptoms.contains("chest") || symptoms.contains("胸") || symptoms.contains("呼吸") || symptoms.contains("heart")) {
-            Long emergencyDeptId = findDeptIdByKeyword("急诊");
-            if (emergencyDeptId != null) {
-                return emergencyDeptId;
-            }
-        }
-        if (Boolean.TRUE.equals(request.getChild()) || symptoms.contains("儿科") || symptoms.contains("儿童")) {
-            Long pediatricsDeptId = findDeptIdByKeyword("儿科");
-            if (pediatricsDeptId != null) {
-                return pediatricsDeptId;
-            }
-        }
-        if (Boolean.TRUE.equals(request.getPregnant()) || symptoms.contains("孕")) {
-            Long obstetricsDeptId = findDeptIdByKeyword("妇产");
-            if (obstetricsDeptId != null) {
-                return obstetricsDeptId;
-            }
+        String deptCode = DeptRoutingSupport.recommendDeptCode(
+                request == null ? null : request.getAge(),
+                request == null ? null : request.getChild(),
+                request == null ? null : request.getPregnant(),
+                request == null ? null : request.getChiefComplaint(),
+                request == null ? null : request.getSymptomTags());
+        Long fallbackDeptId = findDeptIdByCode(deptCode);
+        if (fallbackDeptId != null && !Objects.equals(deptCode, DeptRoutingSupport.GENERAL)) {
+            return fallbackDeptId;
         }
         if (request.getCurrentRecommendDeptId() != null) {
             return request.getCurrentRecommendDeptId();
@@ -400,7 +399,10 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
         if (request.getSelectedDeptId() != null) {
             return request.getSelectedDeptId();
         }
-        return findDeptIdByKeyword("全科");
+        if (fallbackDeptId != null) {
+            return fallbackDeptId;
+        }
+        return findDeptIdByCode(DeptRoutingSupport.GENERAL);
     }
 
     private List<String> inferRiskTags(PatientTriageAiRequest request, Integer level, TriageRule matchedRule) {
@@ -499,6 +501,55 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
         }
         bonus += Math.max(riskTags.size() - 1, 0) * 15;
         return base + bonus;
+    }
+
+    private List<TriageRuleMatchSupport.MatchedRule> filterMatchedRulesByAge(PatientTriageAiRequest request,
+                                                                             List<TriageRuleMatchSupport.MatchedRule> matchedRules) {
+        if (matchedRules == null || matchedRules.isEmpty()) {
+            return List.of();
+        }
+        if (isPediatricPatient(request)) {
+            return matchedRules;
+        }
+        return matchedRules.stream()
+                .filter(matchedRule -> !isPediatricsRule(matchedRule == null ? null : matchedRule.getRule()))
+                .toList();
+    }
+
+    private boolean shouldSkipPediatricsRule(PatientTriageAiRequest request, TriageRule matchedRule) {
+        return !isPediatricPatient(request) && isPediatricsRule(matchedRule);
+    }
+
+    private boolean isPediatricPatient(PatientTriageAiRequest request) {
+        if (request == null) {
+            return false;
+        }
+        return DeptRoutingSupport.isPediatricPatient(request.getAge(), request.getChild());
+    }
+
+    private boolean isPediatricsRule(TriageRule rule) {
+        if (rule == null) {
+            return false;
+        }
+        if (StringUtils.hasText(rule.getRuleCode())
+                && rule.getRuleCode().trim().toUpperCase(Locale.ROOT).startsWith("RULE_PED")) {
+            return true;
+        }
+        return isPediatricsDept(rule.getRecommendDeptId(), null);
+    }
+
+    private boolean isPediatricsDept(Long deptId, String deptName) {
+        if (isPediatricsDeptName(deptName)) {
+            return true;
+        }
+        if (deptId == null) {
+            return false;
+        }
+        return isPediatricsDeptName(resolveDeptName(deptId));
+    }
+
+    private boolean isPediatricsDeptName(String deptName) {
+        return StringUtils.hasText(deptName) && deptName.contains("儿科");
     }
 
     private boolean shouldManualReview(PatientTriageAiRequest request, Integer suggestedLevel, Long suggestedDeptId, String riskLevel) {
@@ -623,6 +674,20 @@ public class PatientTriageAiServiceImpl implements PatientTriageAiService {
         }
         ClinicDept dept = clinicDeptMapper.selectById(deptId);
         return dept == null ? null : dept.getDeptName();
+    }
+
+    private Long findDeptIdByCode(String deptCode) {
+        if (!StringUtils.hasText(deptCode)) {
+            return null;
+        }
+        return clinicDeptMapper.selectList(new LambdaQueryWrapper<ClinicDept>()
+                        .eq(ClinicDept::getDeptCode, deptCode)
+                        .eq(ClinicDept::getEnabled, 1)
+                        .last("limit 1"))
+                .stream()
+                .findFirst()
+                .map(ClinicDept::getId)
+                .orElse(null);
     }
 
     private Long findDeptIdByKeyword(String keyword) {

@@ -11,6 +11,7 @@ import com.hospital.triage.modules.clinic.mapper.ClinicDeptMapper;
 import com.hospital.triage.modules.clinic.mapper.ClinicRoomMapper;
 import com.hospital.triage.modules.patient.entity.dto.PatientQueueQueryDTO;
 import com.hospital.triage.modules.patient.entity.po.PatientInfo;
+import com.hospital.triage.modules.patient.entity.vo.PatientQueueNextStepVO;
 import com.hospital.triage.modules.patient.entity.vo.PatientQueueViewVO;
 import com.hospital.triage.modules.patient.mapper.PatientInfoMapper;
 import com.hospital.triage.modules.patient.service.PatientQueueQueryService;
@@ -156,7 +157,9 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
     }
 
     private boolean shouldLoadRoomRank(QueueTicketVO ticket) {
-        return shouldLoadRank(ticket) && ticket.getRoomId() != null;
+        return shouldLoadRank(ticket)
+                && ticket.getRoomId() != null
+                && ticket.getWaitingForConsultation() == null;
     }
 
     private PatientQueueViewVO buildView(PatientInfo patientInfo,
@@ -188,6 +191,7 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
                     visitRecord != null ? visitRecord.getCurrentDeptId() : patientInfo.getCurrentDeptId(),
                     visitRecord != null ? visitRecord.getCurrentRoomId() : patientInfo.getCurrentRoomId());
             fillAiSuggestion(view, assessment);
+            view.setNextStep(buildNextStep(view));
             return view;
         }
 
@@ -195,6 +199,8 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
         view.setTicketNo(ticket.getTicketNo());
         view.setQueueStatus(ticket.getStatus());
         boolean waitingForConsultation = isWaitingForConsultation(ticket, roomRank);
+        view.setWaitingForConsultation(waitingForConsultation);
+        view.setRoomAssignmentStatus(ticket.getRoomAssignmentStatus());
         view.setQueueStatusText(formatQueueStatus(ticket.getStatus(), waitingForConsultation));
         view.setQueueMessage(formatQueueMessage(ticket.getStatus(), waitingForConsultation));
         view.setTriageLevel(ticket.getTriageLevel());
@@ -207,6 +213,8 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
         view.setRank(rank != null ? rank.getRank() : ticket.getRank());
         view.setWaitingCount(rank != null ? rank.getWaitingCount() : ticket.getWaitingCount());
         view.setEstimatedWaitMinutes(rank != null ? rank.getEstimatedWaitMinutes() : ticket.getEstimatedWaitMinutes());
+        view.setRoomWaitingCount(roomRank != null ? roomRank.getWaitingCount() : null);
+        view.setRoomEstimatedWaitMinutes(roomRank != null ? roomRank.getEstimatedWaitMinutes() : null);
         view.setPriorityReason(ticket.getPriorityReason());
         view.setQueueStrategyMode(ticket.getQueueStrategyMode());
         view.setSurgePriorityApplied(ticket.getSurgePriorityApplied());
@@ -214,6 +222,7 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
         view.setAiPriorityAdvice(ticket.getAiPriorityAdvice());
         fillDeptAndRoom(view, ticket.getDeptId(), ticket.getRoomId());
         fillAiSuggestion(view, assessment);
+        view.setNextStep(buildNextStep(view));
         return view;
     }
 
@@ -269,6 +278,9 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
     }
 
     private boolean isWaitingForConsultation(QueueTicketVO ticket, QueueRankVO roomRank) {
+        if (ticket != null && ticket.getWaitingForConsultation() != null) {
+            return Boolean.TRUE.equals(ticket.getWaitingForConsultation());
+        }
         return ticket != null
                 && ticket.getRoomId() != null
                 && Objects.equals(ticket.getStatus(), QueueStatusEnum.WAITING.name())
@@ -373,5 +385,178 @@ public class PatientQueueQueryServiceImpl implements PatientQueueQueryService {
             case "CANCELLED" -> "当前就诊已取消，请咨询导诊台";
             default -> "当前暂无排队票据，请留意现场安排";
         };
+    }
+
+    private PatientQueueNextStepVO buildNextStep(PatientQueueViewVO view) {
+        PatientQueueNextStepVO nextStep = new PatientQueueNextStepVO();
+        String queueStatus = StringUtils.hasText(view.getQueueStatus()) ? view.getQueueStatus() : "NONE";
+        if (Objects.equals(queueStatus, "NONE")) {
+            fillNoTicketNextStep(nextStep, view);
+            return nextStep;
+        }
+
+        nextStep.setStage(queueStatus);
+        switch (queueStatus) {
+            case "WAITING" -> fillWaitingNextStep(nextStep, view);
+            case "CALLING" -> {
+                nextStep.setTitle("请立刻前往诊室");
+                nextStep.setAction("系统正在叫号，请立即前往对应诊室报到。");
+                nextStep.setLocationHint(buildConsultationLocation(view));
+                nextStep.setUrgency("IMMEDIATE");
+            }
+            case "MISSED" -> {
+                nextStep.setTitle("请尽快联系现场工作人员");
+                nextStep.setAction("您已过号，请尽快联系导诊台或诊室处理。");
+                nextStep.setLocationHint(buildServiceDeskLocation(view));
+                nextStep.setUrgency("HIGH");
+            }
+            case "COMPLETED" -> {
+                nextStep.setTitle("本次接诊已完成");
+                nextStep.setAction("当前无需继续候诊，如需复诊请咨询工作人员。");
+                nextStep.setLocationHint(buildCompletionLocation(view));
+                nextStep.setUrgency("LOW");
+            }
+            case "CANCELLED" -> {
+                nextStep.setTitle("请咨询导诊台");
+                nextStep.setAction("当前排队已取消，请联系导诊台确认后续安排。");
+                nextStep.setLocationHint(buildServiceDeskLocation(view));
+                nextStep.setUrgency("HIGH");
+            }
+            default -> {
+                nextStep.setTitle("请留意现场安排");
+                nextStep.setAction("系统已返回当前状态，请以现场通知为准。");
+                nextStep.setLocationHint(buildGeneralLocation(view));
+                nextStep.setUrgency("NORMAL");
+            }
+        }
+        return nextStep;
+    }
+
+    private void fillNoTicketNextStep(PatientQueueNextStepVO nextStep, PatientQueueViewVO view) {
+        String visitStatus = StringUtils.hasText(view.getVisitStatus()) ? view.getVisitStatus() : "";
+        nextStep.setStage(StringUtils.hasText(visitStatus) ? visitStatus : "NONE");
+        switch (visitStatus) {
+            case "REGISTERED" -> {
+                nextStep.setTitle("请先完成到院报到");
+                nextStep.setAction("请前往导诊台或报到点完成报到，再查看排队进度。");
+                nextStep.setLocationHint("导诊台 / 报到点");
+                nextStep.setUrgency("HIGH");
+            }
+            case "ARRIVED" -> {
+                nextStep.setTitle("请等待分诊完成");
+                nextStep.setAction("您已完成到诊，请在分诊区耐心等待工作人员安排。");
+                nextStep.setLocationHint(buildTriageLocation(view));
+                nextStep.setUrgency("NORMAL");
+            }
+            case "TRIAGED" -> {
+                nextStep.setTitle("等待系统入队");
+                nextStep.setAction("您已完成分诊，正在等待系统入队或人工安排，请留意护士台通知。");
+                nextStep.setLocationHint(buildNurseStationLocation(view));
+                nextStep.setUrgency("NORMAL");
+            }
+            case "IN_TREATMENT" -> {
+                nextStep.setTitle("请按现场接诊安排进行");
+                nextStep.setAction("当前已进入就诊中，请以现场工作人员引导为准。");
+                nextStep.setLocationHint(buildConsultationLocation(view));
+                nextStep.setUrgency("HIGH");
+            }
+            case "COMPLETED" -> {
+                nextStep.setTitle("本次接诊已完成");
+                nextStep.setAction("当前无需继续候诊，如需复诊请咨询工作人员。");
+                nextStep.setLocationHint(buildCompletionLocation(view));
+                nextStep.setUrgency("LOW");
+            }
+            case "CANCELLED" -> {
+                nextStep.setTitle("请咨询导诊台");
+                nextStep.setAction("当前就诊已取消，请联系导诊台确认后续安排。");
+                nextStep.setLocationHint(buildServiceDeskLocation(view));
+                nextStep.setUrgency("HIGH");
+            }
+            default -> {
+                nextStep.setTitle("请先确认当前就诊状态");
+                nextStep.setAction("未查询到有效排队信息，请前往导诊台或咨询现场工作人员。");
+                nextStep.setLocationHint(buildServiceDeskLocation(view));
+                nextStep.setUrgency("NORMAL");
+            }
+        }
+    }
+
+    private void fillWaitingNextStep(PatientQueueNextStepVO nextStep, PatientQueueViewVO view) {
+        boolean nearTurn = isNearTurn(view);
+        if (nearTurn) {
+            nextStep.setTitle("即将轮到您");
+            nextStep.setAction("请立即前往诊室门口候诊，留意现场叫号与屏幕提示。");
+            nextStep.setLocationHint(buildConsultationLocation(view));
+            nextStep.setUrgency("HIGH");
+            return;
+        }
+        nextStep.setTitle("请在候诊区等待");
+        nextStep.setAction("您已进入排队，暂时不必靠近诊室，请留意屏幕与叫号广播。");
+        nextStep.setLocationHint(buildWaitingLocation(view));
+        nextStep.setUrgency("NORMAL");
+    }
+
+    private boolean isNearTurn(PatientQueueViewVO view) {
+        return Boolean.TRUE.equals(view.getWaitingForConsultation())
+                || (view.getRank() != null && view.getRank() <= 3)
+                || (view.getEstimatedWaitMinutes() != null && view.getEstimatedWaitMinutes() <= 10);
+    }
+
+    private String buildWaitingLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "候诊区";
+        }
+        if (StringUtils.hasText(view.getRoomName())) {
+            return view.getRoomName() + "附近候诊区";
+        }
+        return "当前科室候诊区";
+    }
+
+    private String buildConsultationLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getRoomName())) {
+            return view.getRoomName() + "门口候诊区";
+        }
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "候诊区";
+        }
+        return "对应诊室门口";
+    }
+
+    private String buildTriageLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "分诊区";
+        }
+        return "分诊区";
+    }
+
+    private String buildNurseStationLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "护士台";
+        }
+        return "护士台";
+    }
+
+    private String buildServiceDeskLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "导诊台";
+        }
+        return "导诊台";
+    }
+
+    private String buildCompletionLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName() + "服务台";
+        }
+        return "现场服务台";
+    }
+
+    private String buildGeneralLocation(PatientQueueViewVO view) {
+        if (StringUtils.hasText(view.getRoomName())) {
+            return view.getRoomName();
+        }
+        if (StringUtils.hasText(view.getDeptName())) {
+            return view.getDeptName();
+        }
+        return "现场服务台";
     }
 }

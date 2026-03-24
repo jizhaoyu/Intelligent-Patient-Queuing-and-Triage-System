@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.http.HttpStatusCode;
 
 @Data
 @Builder
@@ -32,6 +33,10 @@ public class Result<T> {
 
     public static <T> Result<T> failed(ErrorCodeEnum errorCode) {
         return failed(errorCode.getCode(), errorCode.getMessage());
+    }
+
+    public static <T> Result<T> failed(HttpStatusCode statusCode, String message) {
+        return failed(String.valueOf(statusCode.value()), message);
     }
 
     public static <T> Result<T> failed(String code, String message) {

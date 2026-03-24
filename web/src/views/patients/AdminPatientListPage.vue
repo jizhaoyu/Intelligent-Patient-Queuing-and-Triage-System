@@ -216,9 +216,88 @@ onMounted(() => {
 
 <style scoped>
 .patient-admin-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  gap: 20px;
+}
+
+.patient-admin-page :deep(.el-card) {
+  border: none;
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 22px 48px rgba(8, 47, 73, 0.08);
+}
+
+.patient-admin-page :deep(.el-card__header) {
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(255, 255, 255, 0.82));
+}
+
+.patient-admin-page :deep(.el-card__body) {
+  padding: 22px;
+}
+
+.patient-admin-page :deep(.el-input__wrapper),
+.patient-admin-page :deep(.el-select__wrapper),
+.patient-admin-page :deep(.el-textarea__inner) {
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.18);
+}
+
+.patient-admin-page :deep(.el-input__wrapper),
+.patient-admin-page :deep(.el-select__wrapper) {
+  min-height: 48px;
+}
+
+.patient-admin-page :deep(.el-input__wrapper.is-focus),
+.patient-admin-page :deep(.el-select__wrapper.is-focused),
+.patient-admin-page :deep(.el-textarea__inner:focus) {
+  box-shadow:
+    0 0 0 4px rgba(34, 211, 238, 0.12),
+    inset 0 0 0 1px rgba(8, 145, 178, 0.34);
+}
+
+.patient-admin-page :deep(.el-table) {
+  border-radius: 22px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.patient-admin-page :deep(.el-table th.el-table__cell) {
+  background: rgba(240, 249, 255, 0.9);
+  color: var(--muted-color);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.patient-admin-page :deep(.el-table td.el-table__cell) {
+  border-bottom-color: rgba(148, 163, 184, 0.12);
+}
+
+.patient-admin-page :deep(.el-table__row:hover > td.el-table__cell) {
+  background: rgba(34, 211, 238, 0.06);
+}
+
+.patient-admin-page :deep(.el-dialog) {
+  border-radius: 28px;
+  overflow: hidden;
+}
+
+.patient-admin-page :deep(.el-dialog__header) {
+  margin-right: 0;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(255, 255, 255, 0.84));
+}
+
+.patient-admin-page :deep(.el-dialog__body) {
+  padding: 22px 24px 10px;
+}
+
+.patient-admin-page :deep(.el-dialog__footer) {
+  padding: 0 24px 24px;
 }
 
 .toolbar,
@@ -242,17 +321,30 @@ onMounted(() => {
 }
 
 .summary-card {
-  padding: 16px 18px;
-  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+  border-radius: 22px;
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 1));
   border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 16px 34px rgba(8, 47, 73, 0.06);
+}
+
+.summary-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -24px -26px auto;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.14), transparent 72%);
 }
 
 .summary-card strong {
   display: block;
   margin: 10px 0 6px;
-  font-size: 24px;
-  line-height: 1.2;
+  font-size: 30px;
+  line-height: 1.08;
   color: var(--title-color);
 }
 
@@ -268,6 +360,18 @@ onMounted(() => {
 }
 
 @media (max-width: 1100px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .patient-admin-page :deep(.el-card__body),
+  .patient-admin-page :deep(.el-card__header) {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
   .summary-grid {
     grid-template-columns: 1fr;
   }

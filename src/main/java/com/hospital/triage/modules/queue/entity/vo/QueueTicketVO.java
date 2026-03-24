@@ -36,6 +36,8 @@ public class QueueTicketVO {
     private String sourceType;
     private String sourceRemark;
     private String lastAdjustReason;
+    private Boolean consultationLocked;
+    private String roomAssignmentStatus;
     private String priorityReason;
     private String queueStrategyMode;
     private Boolean surgePriorityApplied;
